@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("SqlSyncService.Tests")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+5d7b529ef4f9b253455f7c3f339431d943ed6713")]
 [assembly: System.Reflection.AssemblyProductAttribute("SqlSyncService.Tests")]
 [assembly: System.Reflection.AssemblyTitleAttribute("SqlSyncService.Tests")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
