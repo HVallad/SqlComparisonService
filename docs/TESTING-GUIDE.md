@@ -1,12 +1,13 @@
 # SQL Sync Service – Local Testing Guide
 
-This guide shows how to exercise the **existing HTTP APIs** against your own SQL Server database and SQL project folder. At this point in the implementation, the comparison engine (DacFx + orchestrator) is wired and tested internally, but it is **not yet exposed as a public HTTP endpoint**. You can still verify:
+This guide shows how to exercise the **existing HTTP APIs** against your own SQL Server database and SQL project folder. At this point in the implementation, the comparison engine (DacFx + orchestrator) is wired and tested internally, but it is **not yet exposed as a public comparison HTTP endpoint**. You can verify:
 
 - The service starts correctly.
 - Your database connection works.
 - Your SQL project folder is recognized and analyzable.
+- Subscriptions that pair a database and project can be created, listed, updated, paused/resumed, and deleted.
 
-Later milestones will add subscription + comparison endpoints on top of this foundation.
+Subscription management endpoints are already available; later milestones will add comparison trigger/history endpoints and background processing on top of this foundation.
 
 ---
 
@@ -181,7 +182,166 @@ This tells you the service can see and analyze your SQL project folder and that 
 
 ---
 
-## 7. How the comparison engine is exercised today
+## 7. Manage subscriptions (database + project pairs)
+
+Subscriptions represent a **pairing between a database and a SQL project folder**, plus options that describe when and how comparisons should run. They are stored in LiteDB and are the foundation for future background monitoring.
+
+> Note: As of now, creating a subscription does **not** yet trigger a comparison by itself. Comparison execution is still done via the test suite; future milestones will wire comparisons to subscriptions.
+
+### 7.1 Endpoint overview
+
+- `POST /api/subscriptions` – Create a subscription.
+- `GET /api/subscriptions` – List subscriptions (optionally filtered by state).
+- `GET /api/subscriptions/{id}` – Detailed view of a single subscription.
+- `PUT /api/subscriptions/{id}` – Update an existing subscription.
+- `POST /api/subscriptions/{id}/pause` – Mark a subscription as paused.
+- `POST /api/subscriptions/{id}/resume` – Resume a previously paused subscription.
+- `DELETE /api/subscriptions/{id}?deleteHistory=true` – Delete a subscription and optionally its comparison history.
+
+### 7.2 Create a subscription
+
+Use this to persist the DB + project configuration you validated with the earlier endpoints.
+
+#### Request body shape
+
+```json
+{
+  "name": "My database subscription",
+  "database": {
+    "server": "localhost\\SQLEXPRESS",
+    "database": "MyTestDb",
+    "authType": "windows",
+    "username": null,
+    "password": null,
+    "trustServerCertificate": true,
+    "connectionTimeoutSeconds": 15
+  },
+  "project": {
+    "path": "C:/Dev/SqlProjects/MyDb",
+    "includePatterns": ["**/*.sql"],
+    "excludePatterns": ["**/bin/**", "**/obj/**"],
+    "structure": "by-type"
+  },
+  "options": {
+    "autoCompare": true,
+    "compareOnFileChange": true,
+    "compareOnDatabaseChange": true,
+    "objectTypes": ["table", "view", "stored-procedure"],
+    "ignoreWhitespace": true,
+    "ignoreComments": false
+  }
+}
+```
+
+Key notes:
+
+- `authType` is case-insensitive. Supported values include:
+  - `"windows"` (default if omitted) – Windows integrated security.
+  - `"sql"` / `"sqlserver"` – SQL authentication (use `username` + `password`).
+  - `"azuread"`, `"azuread-interactive"` – Azure AD modes.
+- `structure` controls how project files are organized; supported values include:
+  - `"flat"`, `"by-schema"`, `"by-schema-and-type"`, and `"by-type"` (the default) which maps to the internal “by object type” layout.
+- `options.objectTypes` controls which object kinds are included (e.g. `"table"`, `"view"`, `"stored-procedure"`, `"function"`, `"trigger"`). If this field is **omitted or an empty array**, the service keeps the defaults from `ComparisonOptions`, which means **all of the main object types above are included**. When you do supply `objectTypes`, it becomes an explicit allow-list and only those types are compared.
+
+#### Example call
+
+```bash
+curl -X POST http://localhost:5050/api/subscriptions \
+  -H "Content-Type: application/json" \
+  -d '{
+        "name": "My database subscription",
+        "database": {
+          "server": "localhost\\SQLEXPRESS",
+          "database": "MyTestDb",
+          "authType": "windows",
+          "trustServerCertificate": true,
+          "connectionTimeoutSeconds": 15
+        },
+        "project": {
+          "path": "C:/Dev/SqlProjects/MyDb",
+          "structure": "by-type"
+        },
+        "options": {
+          "autoCompare": true,
+          "compareOnFileChange": true,
+          "compareOnDatabaseChange": true,
+          "ignoreWhitespace": true,
+          "ignoreComments": false,
+          "objectTypes": ["table", "view"]
+        }
+      }'
+```
+
+On success you should see:
+
+- **201 Created**
+- A `Location` header like `/api/subscriptions/{id}`.
+- A JSON body with the created subscription, including `id`, `state` (initially `"active"`), and timestamps.
+
+If you try to create another subscription with the same name (case-insensitive), you’ll get:
+
+- **409 Conflict** with an error payload where `error.code = "CONFLICT"` and `error.field = "name"`.
+
+### 7.3 List and filter subscriptions
+
+#### List all
+
+```bash
+curl http://localhost:5050/api/subscriptions
+```
+
+This returns a response with `subscriptions` (array) and `totalCount`.
+
+#### Filter by state
+
+```bash
+curl "http://localhost:5050/api/subscriptions?state=active"
+```
+
+Valid `state` values are `active`, `paused`, and (in future) `error`. An invalid value returns:
+
+- **400 Bad Request** with `error.code = "VALIDATION_ERROR"` and `error.field = "state"`.
+
+### 7.4 Inspect, pause, resume, and delete
+
+#### Get a single subscription
+
+```bash
+curl http://localhost:5050/api/subscriptions/{id}
+```
+
+You’ll receive detailed information including database, project, options, basic health placeholders, and statistics (difference counts / last comparison info if any exist).
+
+- **404 Not Found** is returned if the `id` does not exist.
+
+#### Pause and resume
+
+```bash
+# Pause
+curl -X POST http://localhost:5050/api/subscriptions/{id}/pause
+
+# Resume
+curl -X POST http://localhost:5050/api/subscriptions/{id}/resume
+```
+
+Rules:
+
+- Pausing sets the subscription state to `"paused"` and records `pausedAt`.
+- Resuming requires the subscription to currently be paused; otherwise you’ll get:
+  - **409 Conflict** with `error.code = "CONFLICT"` and `error.field = "state"`.
+
+#### Delete a subscription
+
+```bash
+curl -X DELETE "http://localhost:5050/api/subscriptions/{id}?deleteHistory=true"
+```
+
+- **204 No Content** indicates successful deletion.
+- Subsequent `GET /api/subscriptions/{id}` will return **404 Not Found**.
+
+---
+
+## 8. How the comparison engine is exercised today
 
 Milestone 5 implemented the comparison engine components:
 
@@ -200,25 +360,27 @@ The `ComparisonOrchestratorTests` create an in-memory subscription, build snapsh
 
 ---
 
-## 8. What’s next to test full comparisons with your data
+## 9. What’s next to test full comparisons with your data
 
-To run comparisons against **your actual database and project** through HTTP, the next milestone will add subscription + comparison endpoints, for example:
+You can now **persist subscriptions** (database + project pairs) and manage their lifecycle via `/api/subscriptions`, but there is still no public endpoint that actually runs a DacFx comparison for a given subscription.
 
-- `POST /api/subscriptions` – register your database + project pair.
+The next milestones will add, for example:
+
 - `POST /api/subscriptions/{id}/compare` – trigger `IComparisonOrchestrator.RunComparisonAsync` for that subscription.
-- `GET /api/subscriptions/{id}/history` – read back comparison history.
+- `GET /api/subscriptions/{id}/history` – read back detailed comparison history.
 
-Once those endpoints exist, you will be able to:
+Once those endpoints and the background monitoring pipeline exist, you will be able to:
 
-1. Register a subscription pointing at your DB and folder.
-2. Trigger a comparison via HTTP.
-3. Inspect the stored `ComparisonResult` and differences.
+1. Register a subscription pointing at your DB and folder (already possible now).
+2. Trigger a comparison for that subscription via HTTP or background scheduling.
+3. Inspect the stored `ComparisonResult` records and per-object differences over time.
 
 Until then, you can:
 
 - Validate **connectivity** with `/api/connections/test`.
 - Validate **project visibility and structure** with `/api/folders/validate`.
+- Work with **subscriptions** via `/api/subscriptions` to persist your DB + project configuration and test state transitions (active/paused/delete).
 - Use the **test suite** to confirm that the comparison engine is behaving correctly in-memory.
 
-If you’d like, the next step can be to implement a minimal dev-only comparison endpoint that calls `IComparisonOrchestrator` so you can hit it directly with your own DB and project.
+If you’d like, a next step can be to implement a minimal dev-only comparison endpoint that calls `IComparisonOrchestrator` so you can hit it directly with your own DB and project before the full background pipeline is complete.
 

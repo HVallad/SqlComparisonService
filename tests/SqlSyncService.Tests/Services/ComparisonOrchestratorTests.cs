@@ -196,33 +196,41 @@ public class ComparisonOrchestratorTests
         }
     }
 
-	    private sealed class InMemoryComparisonHistoryRepository : IComparisonHistoryRepository
-	    {
-	        public List<ComparisonResult> Results { get; } = new();
-	
-	        public Task AddAsync(ComparisonResult result, CancellationToken cancellationToken = default)
-	        {
-	            Results.Add(result);
-	            return Task.CompletedTask;
-	        }
-	
-	        public Task<ComparisonResult?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) =>
-	            Task.FromResult<ComparisonResult?>(Results.FirstOrDefault(r => r.Id == id));
-	
-	        public Task<IReadOnlyList<ComparisonResult>> GetBySubscriptionAsync(Guid subscriptionId, int? maxCount = null, CancellationToken cancellationToken = default)
-	        {
-	            IEnumerable<ComparisonResult> query = Results
-	                .Where(r => r.SubscriptionId == subscriptionId)
-	                .OrderByDescending(r => r.ComparedAt);
-	
-	            if (maxCount.HasValue)
-	            {
-	                query = query.Take(maxCount.Value);
-	            }
-	
-	            return Task.FromResult<IReadOnlyList<ComparisonResult>>(query.ToList());
-	        }
-	    }
+	    	private sealed class InMemoryComparisonHistoryRepository : IComparisonHistoryRepository
+	    	{
+	    	    public List<ComparisonResult> Results { get; } = new();
+	    	
+	    	    public Task AddAsync(ComparisonResult result, CancellationToken cancellationToken = default)
+	    	    {
+	    	        Results.Add(result);
+	    	        return Task.CompletedTask;
+	    	    }
+	    	
+	    	    public Task<ComparisonResult?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) =>
+	    	        Task.FromResult<ComparisonResult?>(Results.FirstOrDefault(r => r.Id == id));
+	    	
+	    	    public Task<IReadOnlyList<ComparisonResult>> GetBySubscriptionAsync(Guid subscriptionId, int? maxCount = null, CancellationToken cancellationToken = default)
+	    	    {
+	    	        IEnumerable<ComparisonResult> query = Results
+	    	            .Where(r => r.SubscriptionId == subscriptionId)
+	    	            .OrderByDescending(r => r.ComparedAt);
+	    	
+	    	        if (maxCount.HasValue)
+	    	        {
+	    	            query = query.Take(maxCount.Value);
+	    	        }
+	    	
+	    	        return Task.FromResult<IReadOnlyList<ComparisonResult>>(query.ToList());
+	    	    }
+	    	
+	    	    public Task<int> DeleteBySubscriptionAsync(Guid subscriptionId, CancellationToken cancellationToken = default)
+	    	    {
+	    	        var before = Results.Count;
+	    	        Results.RemoveAll(r => r.SubscriptionId == subscriptionId);
+	    	        var removed = before - Results.Count;
+	    	        return Task.FromResult(removed);
+	    	    }
+	    	}
 
     private sealed class StubDatabaseModelBuilder : IDatabaseModelBuilder
     {
