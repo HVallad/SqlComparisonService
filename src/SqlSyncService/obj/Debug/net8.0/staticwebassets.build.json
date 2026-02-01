@@ -1,0 +1,12 @@
+{
+  "Version": 1,
+  "Hash": "RFINyEsiMO2zuiQk0bzjstWnHKBMr48nQI2yJ0Ee/f0=",
+  "Source": "SqlSyncService",
+  "BasePath": "_content/SqlSyncService",
+  "Mode": "Default",
+  "ManifestType": "Build",
+  "ReferencedProjectsConfiguration": [],
+  "DiscoveryPatterns": [],
+  "Assets": [],
+  "Endpoints": []
+}

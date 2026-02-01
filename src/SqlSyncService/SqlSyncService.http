@@ -1,0 +1,6 @@
+@SqlSyncService_HostAddress = http://localhost:5206
+
+GET {{SqlSyncService_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
