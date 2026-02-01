@@ -51,6 +51,10 @@
         "net8.0": {
           "targetAlias": "net8.0",
           "dependencies": {
+            "DiffPlex": {
+              "target": "Package",
+              "version": "[1.9.0, )"
+            },
             "LiteDB": {
               "target": "Package",
               "version": "[5.0.21, )"
@@ -62,6 +66,14 @@
             "Microsoft.Data.SqlClient": {
               "target": "Package",
               "version": "[6.1.4, )"
+            },
+            "Microsoft.SqlServer.DacFx": {
+              "target": "Package",
+              "version": "[170.2.70, )"
+            },
+            "Microsoft.SqlServer.TransactSql.ScriptDom": {
+              "target": "Package",
+              "version": "[170.157.0, )"
             },
             "Swashbuckle.AspNetCore": {
               "target": "Package",

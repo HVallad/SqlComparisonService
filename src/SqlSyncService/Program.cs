@@ -7,6 +7,7 @@ using SqlSyncService.Middleware;
 using SqlSyncService.Persistence;
 using SqlSyncService.Realtime;
 using SqlSyncService.Services;
+using SqlSyncService.DacFx;
 using System.IO;
 using System.Linq;
 
@@ -100,6 +101,10 @@ builder.Services.AddHealthChecks();
 // Application services
 builder.Services.AddScoped<IDatabaseConnectionTester, DatabaseConnectionTester>();
 builder.Services.AddScoped<IFolderValidator, FolderValidator>();
+	builder.Services.AddScoped<IDatabaseModelBuilder, DatabaseModelBuilder>();
+	builder.Services.AddScoped<IFileModelBuilder, FileModelBuilder>();
+	builder.Services.AddScoped<ISchemaComparer, SchemaComparer>();
+	builder.Services.AddScoped<IComparisonOrchestrator, ComparisonOrchestrator>();
 
 // Swagger/OpenAPI
 builder.Services.AddEndpointsApiExplorer();
