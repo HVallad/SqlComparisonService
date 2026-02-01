@@ -1,5 +1,14 @@
+using LiteDB;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 using SqlSyncService.Configuration;
+using SqlSyncService.Contracts;
+using SqlSyncService.Middleware;
+using SqlSyncService.Persistence;
 using SqlSyncService.Realtime;
+using SqlSyncService.Services;
+using System.IO;
+using System.Linq;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -17,16 +26,89 @@ builder.Services
         "Service configuration contains out-of-range values.")
     .ValidateOnStart();
 
+// Bind and validate LiteDB configuration
+builder.Services
+    .AddOptions<LiteDbOptions>()
+    .Bind(builder.Configuration.GetSection("LiteDb"))
+    .ValidateDataAnnotations()
+    .Validate(
+        options => !string.IsNullOrWhiteSpace(options.DatabasePath),
+        "LiteDb.DatabasePath must be provided.")
+    .ValidateOnStart();
+
+// Register LiteDB and persistence layer
+builder.Services.AddSingleton<ILiteDatabase>(sp =>
+{
+    var options = sp.GetRequiredService<IOptions<LiteDbOptions>>().Value;
+
+    var databasePath = options.DatabasePath;
+    if (string.IsNullOrWhiteSpace(databasePath))
+    {
+        throw new InvalidOperationException("LiteDb.DatabasePath configuration is required.");
+    }
+
+    var directory = Path.GetDirectoryName(databasePath);
+    if (!string.IsNullOrWhiteSpace(directory) && !Directory.Exists(directory))
+    {
+        Directory.CreateDirectory(directory);
+    }
+
+    return new LiteDatabase(databasePath);
+});
+
+builder.Services.AddSingleton<LiteDbContext>();
+builder.Services.AddScoped<ISubscriptionRepository, SubscriptionRepository>();
+builder.Services.AddScoped<ISchemaSnapshotRepository, SchemaSnapshotRepository>();
+builder.Services.AddScoped<IComparisonHistoryRepository, ComparisonHistoryRepository>();
+builder.Services.AddScoped<IPendingChangeRepository, PendingChangeRepository>();
+
 // Add services to the container.
-builder.Services.AddControllers();
+builder.Services
+    .AddControllers()
+    .ConfigureApiBehaviorOptions(options =>
+    {
+        options.InvalidModelStateResponseFactory = context =>
+        {
+            var firstError = context.ModelState
+                .Where(kvp => kvp.Value?.Errors.Count > 0)
+                .Select(kvp => new
+                {
+                    Field = kvp.Key,
+                    Error = kvp.Value!.Errors.First().ErrorMessage
+                })
+                .FirstOrDefault();
+
+            var errorDetail = new ErrorDetail
+            {
+                Code = ErrorCodes.ValidationError,
+                Message = "The request contains invalid data.",
+                Details = firstError?.Error,
+                Field = string.IsNullOrWhiteSpace(firstError?.Field) ? null : firstError!.Field,
+                TraceId = context.HttpContext.TraceIdentifier,
+                Timestamp = DateTime.UtcNow
+            };
+
+            var response = new ErrorResponse { Error = errorDetail };
+
+            return new BadRequestObjectResult(response);
+        };
+    });
+
 builder.Services.AddSignalR();
 builder.Services.AddHealthChecks();
+
+// Application services
+builder.Services.AddScoped<IDatabaseConnectionTester, DatabaseConnectionTester>();
+builder.Services.AddScoped<IFolderValidator, FolderValidator>();
 
 // Swagger/OpenAPI
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 var app = builder.Build();
+
+// Global exception handling
+app.UseMiddleware<GlobalExceptionHandlingMiddleware>();
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())

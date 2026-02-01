@@ -1,0 +1,7 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+	    { "name": ".NET Launch App", "type": "coreclr", "request": "launch", "program": "dotnet", "args": ["run", "--project", "src/SqlSyncService/SqlSyncService.csproj"], "cwd": "${workspaceFolder}" },
+	    { "name": ".NET Debug Tests", "type": "coreclr", "request": "launch", "program": "dotnet", "args": ["test", "tests/SqlSyncService.Tests/SqlSyncService.Tests.csproj", "--no-build"], "cwd": "${workspaceFolder}" }
+  ]
+}

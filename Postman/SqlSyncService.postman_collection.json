@@ -1,0 +1,63 @@
+{
+  "info":{
+    "name":"SQL Sync Service API",
+    "description":"Postman collection for the SQL Comparison Service background service as defined in SERVICE-SPECIFICATION.md.",
+    "schema":"https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item":[
+    {
+      "name":"Health & Status",
+      "item":[
+        {"name":"GET /health","request":{"method":"GET","url":{"raw":"{{baseUrl}}/health","host":["{{baseUrl}}"],"path":["health"]},"description":"Basic health check for service availability."},"response":[]},
+        {"name":"GET /status","request":{"method":"GET","url":{"raw":"{{baseUrl}}/status","host":["{{baseUrl}}"],"path":["status"]},"description":"Detailed service status including subscriptions and background tasks."},"response":[]}
+      ]
+    },
+    {
+      "name":"Connection Management",
+      "item":[
+        {"name":"POST /connections/test","request":{"method":"POST","header":[{"key":"Content-Type","value":"application/json"}],"body":{"mode":"raw","raw":"{\"server\":\"localhost\",\"database\":\"MyDatabase\",\"authType\":\"windows\",\"trustServerCertificate\":true}"},"url":{"raw":"{{baseUrl}}/connections/test","host":["{{baseUrl}}"],"path":["connections","test"]},"description":"Test a database connection without creating a subscription."},"response":[]},
+        {"name":"POST /folders/validate","request":{"method":"POST","header":[{"key":"Content-Type","value":"application/json"}],"body":{"mode":"raw","raw":"{\"path\":\"C:/Projects/MyDatabase\",\"includePatterns\":[\"**/*.sql\"],\"excludePatterns\":[\"**/bin/**\",\"**/obj/**\"]}"},"url":{"raw":"{{baseUrl}}/folders/validate","host":["{{baseUrl}}"],"path":["folders","validate"]},"description":"Validate a project folder path and analyze its contents."},"response":[]}
+      ]
+    },
+    {
+      "name":"Subscription Management",
+      "item":[
+        {"name":"GET /subscriptions","request":{"method":"GET","url":{"raw":"{{baseUrl}}/subscriptions","host":["{{baseUrl}}"],"path":["subscriptions"]},"description":"List all subscriptions with optional state filter."},"response":[]},
+        {"name":"POST /subscriptions","request":{"method":"POST","header":[{"key":"Content-Type","value":"application/json"}],"body":{"mode":"raw","raw":"{\"name\":\"MyProject\",\"database\":{\"server\":\"localhost\",\"database\":\"MyDatabase\",\"authType\":\"windows\",\"trustServerCertificate\":true,\"connectionTimeoutSeconds\":30},\"project\":{\"path\":\"C:/Projects/MyDatabase\",\"includePatterns\":[\"**/*.sql\"],\"excludePatterns\":[\"**/bin/**\",\"**/obj/**\"],\"structure\":\"by-type\"},\"options\":{\"autoCompare\":true,\"compareOnFileChange\":true,\"compareOnDatabaseChange\":true}}"},"url":{"raw":"{{baseUrl}}/subscriptions","host":["{{baseUrl}}"],"path":["subscriptions"]},"description":"Create a new subscription."},"response":[]},
+        {"name":"GET /subscriptions/{id}","request":{"method":"GET","url":{"raw":"{{baseUrl}}/subscriptions/{{subscriptionId}}","host":["{{baseUrl}}"],"path":["subscriptions","{{subscriptionId}}"]},"description":"Get detailed subscription information."},"response":[]},
+        {"name":"PUT /subscriptions/{id}","request":{"method":"PUT","header":[{"key":"Content-Type","value":"application/json"}],"body":{"mode":"raw","raw":"{\"name\":\"MyProject-Updated\",\"options\":{\"ignoreComments\":true}}"},"url":{"raw":"{{baseUrl}}/subscriptions/{{subscriptionId}}","host":["{{baseUrl}}"],"path":["subscriptions","{{subscriptionId}}"]},"description":"Update subscription configuration (partial updates allowed)."},"response":[]},
+        {"name":"DELETE /subscriptions/{id}","request":{"method":"DELETE","url":{"raw":"{{baseUrl}}/subscriptions/{{subscriptionId}}","host":["{{baseUrl}}"],"path":["subscriptions","{{subscriptionId}}"]},"description":"Delete a subscription; optionally include ?deleteHistory=true to remove history."},"response":[]},
+        {"name":"POST /subscriptions/{id}/pause","request":{"method":"POST","url":{"raw":"{{baseUrl}}/subscriptions/{{subscriptionId}}/pause","host":["{{baseUrl}}"],"path":["subscriptions","{{subscriptionId}}","pause"]},"description":"Pause monitoring for a subscription."},"response":[]},
+        {"name":"POST /subscriptions/{id}/resume","request":{"method":"POST","url":{"raw":"{{baseUrl}}/subscriptions/{{subscriptionId}}/resume","host":["{{baseUrl}}"],"path":["subscriptions","{{subscriptionId}}","resume"]},"description":"Resume monitoring for a paused subscription."},"response":[]}
+      ]
+    },
+    {
+      "name":"Comparison Operations",
+      "item":[
+        {"name":"POST /subscriptions/{id}/compare","request":{"method":"POST","header":[{"key":"Content-Type","value":"application/json"}],"body":{"mode":"raw","raw":"{\"forceFullComparison\":false}"},"url":{"raw":"{{baseUrl}}/subscriptions/{{subscriptionId}}/compare","host":["{{baseUrl}}"],"path":["subscriptions","{{subscriptionId}}","compare"]},"description":"Trigger a schema comparison for a subscription."},"response":[]},
+        {"name":"GET /subscriptions/{id}/comparisons","request":{"method":"GET","url":{"raw":"{{baseUrl}}/subscriptions/{{subscriptionId}}/comparisons","host":["{{baseUrl}}"],"path":["subscriptions","{{subscriptionId}}","comparisons"]},"description":"Get comparison history for a subscription."},"response":[]},
+        {"name":"GET /comparisons/{comparisonId}","request":{"method":"GET","url":{"raw":"{{baseUrl}}/comparisons/{{comparisonId}}","host":["{{baseUrl}}"],"path":["comparisons","{{comparisonId}}"]},"description":"Get detailed comparison result."},"response":[]},
+        {"name":"GET /comparisons/{comparisonId}/differences","request":{"method":"GET","url":{"raw":"{{baseUrl}}/comparisons/{{comparisonId}}/differences","host":["{{baseUrl}}"],"path":["comparisons","{{comparisonId}}","differences"]},"description":"Get all differences for a comparison; use query params to filter."},"response":[]},
+        {"name":"GET /comparisons/{comparisonId}/differences/{diffId}","request":{"method":"GET","url":{"raw":"{{baseUrl}}/comparisons/{{comparisonId}}/differences/{{diffId}}","host":["{{baseUrl}}"],"path":["comparisons","{{comparisonId}}","differences","{{diffId}}"]},"description":"Get detailed information for a specific difference, including scripts and diffs."},"response":[]},
+        {"name":"GET /subscriptions/{id}/differences/current","request":{"method":"GET","url":{"raw":"{{baseUrl}}/subscriptions/{{subscriptionId}}/differences/current","host":["{{baseUrl}}"],"path":["subscriptions","{{subscriptionId}}","differences","current"]},"description":"Get current differences from the most recent comparison for a subscription."},"response":[]}
+      ]
+    },
+    {
+      "name":"Object Details & Scripts",
+      "item":[
+        {"name":"GET /subscriptions/{id}/objects","request":{"method":"GET","url":{"raw":"{{baseUrl}}/subscriptions/{{subscriptionId}}/objects","host":["{{baseUrl}}"],"path":["subscriptions","{{subscriptionId}}","objects"]},"description":"List all objects tracked in a subscription; use query params to filter."},"response":[]},
+        {"name":"GET /subscriptions/{id}/objects/{objectName}","request":{"method":"GET","url":{"raw":"{{baseUrl}}/subscriptions/{{subscriptionId}}/objects/{{objectName}}","host":["{{baseUrl}}"],"path":["subscriptions","{{subscriptionId}}","objects","{{objectName}}"]},"description":"Get detailed object information from database and files."},"response":[]},
+        {"name":"GET /subscriptions/{id}/objects/{objectName}/script","request":{"method":"GET","url":{"raw":"{{baseUrl}}/subscriptions/{{subscriptionId}}/objects/{{objectName}}/script","host":["{{baseUrl}}"],"path":["subscriptions","{{subscriptionId}}","objects","{{objectName}}","script"]},"description":"Get object script from database or file (use query params source and format)."},"response":[]},
+        {"name":"GET /subscriptions/{id}/scripts/export","request":{"method":"GET","url":{"raw":"{{baseUrl}}/subscriptions/{{subscriptionId}}/scripts/export","host":["{{baseUrl}}"],"path":["subscriptions","{{subscriptionId}}","scripts","export"]},"description":"Export all database objects as scripts; use query params for types and format."},"response":[]}
+      ]
+    }
+  ],
+  "variable":[
+    {"key":"baseUrl","value":"http://localhost:5050/api","type":"string"},
+    {"key":"subscriptionId","value":"550e8400-e29b-41d4-a716-446655440000","type":"string"},
+    {"key":"comparisonId","value":"770e8400-e29b-41d4-a716-446655440002","type":"string"},
+    {"key":"diffId","value":"diff-001","type":"string"},
+    {"key":"objectName","value":"dbo.Users","type":"string"}
+  ]
+}
+

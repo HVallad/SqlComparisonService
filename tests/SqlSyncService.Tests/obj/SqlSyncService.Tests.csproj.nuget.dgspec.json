@@ -51,9 +51,17 @@
         "net8.0": {
           "targetAlias": "net8.0",
           "dependencies": {
+            "LiteDB": {
+              "target": "Package",
+              "version": "[5.0.21, )"
+            },
             "Microsoft.AspNetCore.OpenApi": {
               "target": "Package",
               "version": "[8.0.23, )"
+            },
+            "Microsoft.Data.SqlClient": {
+              "target": "Package",
+              "version": "[6.1.4, )"
             },
             "Swashbuckle.AspNetCore": {
               "target": "Package",

@@ -4,6 +4,7 @@ namespace SqlSyncService.Domain.Caching;
 
 public class SchemaSnapshot
 {
+    public Guid Id { get; set; } = Guid.NewGuid();
     public Guid SubscriptionId { get; set; }
     public DateTime CapturedAt { get; set; }
     public string DatabaseVersion { get; set; } = string.Empty;
