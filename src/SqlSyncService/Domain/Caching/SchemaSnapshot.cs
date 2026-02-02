@@ -19,6 +19,7 @@ public class SchemaObjectSummary
     public string ObjectName { get; set; } = string.Empty;
     public SqlObjectType ObjectType { get; set; }
     public DateTime? ModifiedDate { get; set; }
-    public string DefinitionHash { get; set; } = string.Empty;
+	    public string DefinitionHash { get; set; } = string.Empty;
+	    public string DefinitionScript { get; set; } = string.Empty;
 }
 

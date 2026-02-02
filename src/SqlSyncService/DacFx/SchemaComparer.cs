@@ -56,7 +56,9 @@ public class SchemaComparer : ISchemaComparer
                     SchemaName = dbObject.SchemaName,
                     ObjectType = dbObject.ObjectType,
                     DifferenceType = DifferenceType.Delete,
-                    Source = DifferenceSource.Database
+	                    Source = DifferenceSource.Database,
+	                    DatabaseDefinition = dbObject.DefinitionScript,
+	                    FileDefinition = null
                 });
             }
             else if (!string.Equals(dbObject.DefinitionHash, fileEntry.ContentHash, StringComparison.Ordinal))
@@ -69,7 +71,9 @@ public class SchemaComparer : ISchemaComparer
                     ObjectType = dbObject.ObjectType,
                     DifferenceType = DifferenceType.Modify,
                     Source = DifferenceSource.FileSystem,
-                    FilePath = fileEntry.FilePath
+	                    FilePath = fileEntry.FilePath,
+	                    DatabaseDefinition = dbObject.DefinitionScript,
+	                    FileDefinition = fileEntry.Content
                 });
             }
         }
@@ -91,7 +95,9 @@ public class SchemaComparer : ISchemaComparer
                     ObjectType = fileEntry.ObjectType,
                     DifferenceType = DifferenceType.Add,
                     Source = DifferenceSource.FileSystem,
-                    FilePath = fileEntry.FilePath
+	                    FilePath = fileEntry.FilePath,
+	                    DatabaseDefinition = null,
+	                    FileDefinition = fileEntry.Content
                 });
             }
         }
@@ -102,15 +108,27 @@ public class SchemaComparer : ISchemaComparer
     private static string BuildKey(string name, SqlObjectType type) =>
         $"{type}:{name}";
 
-    private static bool ShouldInclude(SqlObjectType type, ComparisonOptions options) =>
-        type switch
-        {
-            SqlObjectType.Table => options.IncludeTables,
-            SqlObjectType.View => options.IncludeViews,
-            SqlObjectType.StoredProcedure => options.IncludeStoredProcedures,
-            SqlObjectType.ScalarFunction or SqlObjectType.TableValuedFunction or SqlObjectType.InlineTableValuedFunction => options.IncludeFunctions,
-            SqlObjectType.Trigger => options.IncludeTriggers,
-            _ => true
-        };
+	    private static bool ShouldInclude(SqlObjectType type, ComparisonOptions options)
+	    {
+	        if (!SqlObjectTypeSupport.IsSupportedForComparison(type))
+	        {
+	            // Anything outside the supported whitelist (including Login,
+	            // Unknown, etc.) is excluded from comparison.
+	            return false;
+	        }
+
+	        return type switch
+	        {
+	            SqlObjectType.Table => options.IncludeTables,
+	            SqlObjectType.View => options.IncludeViews,
+	            SqlObjectType.StoredProcedure => options.IncludeStoredProcedures,
+	            SqlObjectType.ScalarFunction or SqlObjectType.TableValuedFunction or SqlObjectType.InlineTableValuedFunction => options.IncludeFunctions,
+	            SqlObjectType.Trigger => options.IncludeTriggers,
+	            // Security principals are whitelisted and always included
+	            // when present; there is no per-type toggle today.
+	            SqlObjectType.User or SqlObjectType.Role => true,
+	            _ => false
+	        };
+	    }
 }
 

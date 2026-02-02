@@ -953,18 +953,21 @@ public class SchemaDifference
 
 public enum SqlObjectType
 {
-    Table,
-    View,
-    StoredProcedure,
-    ScalarFunction,
-    TableValuedFunction,
-    InlineTableValuedFunction,
-    Trigger,
-    Index,
-    Constraint,
-    UserDefinedType,
-    Schema,
-    Synonym
+	Table,
+	View,
+	StoredProcedure,
+	ScalarFunction,
+	TableValuedFunction,
+	InlineTableValuedFunction,
+	Trigger,
+	Index,
+	Constraint,
+	UserDefinedType,
+	Schema,
+	Synonym,
+	Login,
+	Role,
+	Unknown
 }
 
 public enum DifferenceType

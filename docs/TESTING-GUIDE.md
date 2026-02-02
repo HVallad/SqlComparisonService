@@ -1,13 +1,13 @@
 # SQL Sync Service – Local Testing Guide
 
-This guide shows how to exercise the **existing HTTP APIs** against your own SQL Server database and SQL project folder. At this point in the implementation, the comparison engine (DacFx + orchestrator) is wired and tested internally, but it is **not yet exposed as a public comparison HTTP endpoint**. You can verify:
+This guide shows how to exercise the **existing HTTP APIs** against your own SQL Server database and SQL project folder. At this point in the implementation, the comparison engine (DacFx + orchestrator) is wired and available via manual comparison endpoints for subscriptions, including per-object difference APIs. Background monitoring is not yet exposed. You can verify:
 
 - The service starts correctly.
 - Your database connection works.
 - Your SQL project folder is recognized and analyzable.
 - Subscriptions that pair a database and project can be created, listed, updated, paused/resumed, and deleted.
 
-Subscription management endpoints are already available; later milestones will add comparison trigger/history endpoints and background processing on top of this foundation.
+Subscription management, comparison trigger/history, and per-object difference endpoints are already available; later milestones will add background processing on top of this foundation.
 
 ---
 
@@ -341,46 +341,301 @@ curl -X DELETE "http://localhost:5050/api/subscriptions/{id}?deleteHistory=true"
 
 ---
 
-## 8. How the comparison engine is exercised today
+## 8. Trigger comparisons and browse history
 
-Milestone 5 implemented the comparison engine components:
+Milestone 7 exposes the comparison engine via HTTP for **manual comparisons per subscription**.
 
-- `DatabaseModelBuilder` (extracts schema via DacFx and builds `SchemaSnapshot`).
-- `FileModelBuilder` (scans your project folder and builds `FileModelCache`).
-- `SchemaComparer` (compares snapshot vs cache to produce `SchemaDifference` records).
-- `ComparisonOrchestrator` (coordinates the above, enforces concurrency, and persists `ComparisonResult`).
+### 8.1 Trigger a comparison for a subscription
 
-Right now these are exercised **via automated tests**, not via a public HTTP endpoint yet. You can run the tests to see the engine in action end-to-end:
+#### Endpoint
 
-```bash
-dotnet test tests/SqlSyncService.Tests/SqlSyncService.Tests.csproj
+- `POST /api/subscriptions/{id}/compare`
+
+`{id}` is the subscription ID you created earlier.
+
+#### Request body
+
+The body is optional. When omitted, the service uses the subscription’s stored options and performs a normal comparison.
+
+Minimal example forcing a full comparison:
+
+```json
+{
+  "forceFullComparison": true
+}
 ```
 
-The `ComparisonOrchestratorTests` create an in-memory subscription, build snapshots / caches using stubs, run a comparison, and verify that `ComparisonResult` and snapshots are persisted correctly.
+Fields:
+
+- `forceFullComparison` (bool, optional)
+  - `true` – force a full snapshot rebuild before comparison.
+  - `false` or omitted – allow the orchestrator to use an incremental comparison if available.
+- `objectTypes` (string[], optional)
+  - Reserved for future use. You can send values like `"table"`, `"view"`, etc., but the current implementation always uses the subscription’s configured object type options.
+- `objectNames` (string[], optional)
+  - Reserved for future use; currently ignored.
+
+#### Example call
+
+```bash
+curl -X POST "http://localhost:5050/api/subscriptions/{id}/compare" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "forceFullComparison": true
+      }'
+```
+
+#### Expected responses
+
+- **202 Accepted** – comparison was started successfully.
+
+Response shape (abridged):
+
+```json
+{
+  "comparisonId": "GUID",
+  "subscriptionId": "GUID",
+  "status": "has-differences",
+  "queuedAt": "2024-01-01T10:00:00Z",
+  "estimatedDuration": "PT5S"
+}
+```
+
+Notes:
+
+- `status` reflects the comparison result (`"synchronized"`, `"has-differences"`, `"error"`, or `"partial"`).
+- `queuedAt` is derived from `comparedAt - duration` on the stored result.
+- `estimatedDuration` is the actual duration encoded as an ISO 8601 duration string.
+
+Error cases:
+
+- **404 Not Found** – subscription does not exist (`error.code = "NOT_FOUND"`).
+- **409 Conflict** – a comparison is already in progress (`error.code = "COMPARISON_IN_PROGRESS"`).
+
+### 8.2 List comparison history for a subscription
+
+#### Endpoint
+
+- `GET /api/subscriptions/{id}/comparisons?limit=20&offset=0&status=completed|failed`
+
+Query parameters:
+
+- `limit` – max number of items to return (default `20`, must be > 0).
+- `offset` – number of items to skip (default `0`, must be >= 0).
+- `status` – optional filter:
+  - `completed` – comparisons whose status is **not** `error`.
+  - `failed` – comparisons whose status **is** `error`.
+
+#### Example calls
+
+List the first page of all comparisons for a subscription:
+
+```bash
+curl "http://localhost:5050/api/subscriptions/{id}/comparisons"
+```
+
+List failed comparisons, 10 per page, skipping the first 10:
+
+```bash
+curl "http://localhost:5050/api/subscriptions/{id}/comparisons?status=failed&limit=10&offset=10"
+```
+
+#### Response shape
+
+On success (**200 OK**):
+
+```json
+{
+  "comparisons": [
+    {
+      "id": "GUID",
+      "status": "has-differences",
+      "startedAt": "2024-01-01T09:59:55Z",
+      "completedAt": "2024-01-01T10:00:00Z",
+      "duration": "PT5S",
+      "differenceCount": 3,
+      "objectsCompared": 0,
+      "trigger": "manual"
+    }
+  ],
+  "totalCount": 1,
+  "limit": 20,
+  "offset": 0
+}
+```
+
+Notes:
+
+- `objectsCompared` is currently `0` (placeholder for future enrichment).
+- `trigger` is currently always `"manual"`.
+
+Error cases:
+
+- **404 Not Found** – subscription does not exist (`error.code = "NOT_FOUND"`).
+- **400 Bad Request** – invalid `status` value (`error.code = "VALIDATION_ERROR"`, `error.field = "status"`).
+
+### 8.3 Inspect a specific comparison
+
+#### Endpoint
+
+- `GET /api/comparisons/{comparisonId}`
+
+#### Example call
+
+```bash
+curl "http://localhost:5050/api/comparisons/{comparisonId}"
+```
+
+#### Response shape
+
+On success (**200 OK**):
+
+```json
+{
+  "id": "GUID",
+  "subscriptionId": "GUID",
+  "status": "has-differences",
+  "comparedAt": "2024-01-01T10:00:00Z",
+  "duration": "PT5S",
+  "differenceCount": 3,
+  "summary": {
+    "totalDifferences": 3,
+    "byType": {
+      "table": 1,
+      "function": 1,
+      "trigger": 1
+    },
+    "byAction": {
+      "add": 1,
+      "modify": 1,
+      "delete": 1
+    },
+    "byDirection": {
+      "database-only": 1,
+      "file-only": 1,
+      "different": 1
+    }
+  }
+}
+```
+
+Error case:
+
+- **404 Not Found** – comparison does not exist (`error.code = "NOT_FOUND"`).
+
+This endpoint is ideal for populating a high-level “summary panel” for a selected comparison in your client.
 
 ---
 
-## 9. What’s next to test full comparisons with your data
+## 9. Inspect per-object differences for a comparison
 
-You can now **persist subscriptions** (database + project pairs) and manage their lifecycle via `/api/subscriptions`, but there is still no public endpoint that actually runs a DacFx comparison for a given subscription.
+Once you have a comparison ID (from section 8), you can drill into the individual object-level differences.
 
-The next milestones will add, for example:
+### 9.1 List differences for a comparison
 
-- `POST /api/subscriptions/{id}/compare` – trigger `IComparisonOrchestrator.RunComparisonAsync` for that subscription.
-- `GET /api/subscriptions/{id}/history` – read back detailed comparison history.
+#### Endpoint
 
-Once those endpoints and the background monitoring pipeline exist, you will be able to:
+- `GET /api/comparisons/{comparisonId}/differences`
 
-1. Register a subscription pointing at your DB and folder (already possible now).
-2. Trigger a comparison for that subscription via HTTP or background scheduling.
-3. Inspect the stored `ComparisonResult` records and per-object differences over time.
+#### Query parameters
 
-Until then, you can:
+- `type` (optional) – filter by object type:
+  - `table`, `view`, `stored-procedure`, `function`, `trigger`.
+- `action` (optional) – filter by change type:
+  - `add`, `delete`, `change` (you may also pass `modify`, which is treated as `change`).
+- `direction` (optional) – filter by where the object exists:
+  - `database-only`, `file-only`, or `different`.
+  - The API also accepts camelCase values (`databaseOnly`, `fileOnly`) for convenience.
+
+#### Example call
+
+```bash
+curl "http://localhost:5050/api/comparisons/{comparisonId}/differences?type=table&action=add&direction=file-only"
+```
+
+#### Example response (abridged)
+
+```json
+{
+  "comparisonId": "770e8400-e29b-41d4-a716-446655440002",
+  "differences": [
+    {
+      "id": "diff-001",
+      "objectType": "table",
+      "objectName": "dbo.NewTable",
+      "action": "add",
+      "direction": "file-only",
+      "description": "Object exists in project files but not in database.",
+      "severity": "info",
+      "filePath": "Tables/dbo.NewTable.sql",
+      "suggestedFilePath": null
+    }
+  ],
+  "totalCount": 1
+}
+```
+
+### 9.2 Inspect a single difference in detail
+
+#### Endpoint
+
+- `GET /api/comparisons/{comparisonId}/differences/{diffId}`
+
+#### Example call
+
+```bash
+curl "http://localhost:5050/api/comparisons/{comparisonId}/differences/{diffId}"
+```
+
+#### Example response (abridged)
+
+```json
+{
+  "id": "diff-002",
+  "comparisonId": "770e8400-e29b-41d4-a716-446655440002",
+  "subscriptionId": "770e8400-e29b-41d4-a716-446655440001",
+  "objectType": "stored-procedure",
+  "objectName": "dbo.GetUsers",
+  "action": "change",
+  "direction": "different",
+  "filePath": "StoredProcedures/dbo.GetUsers.sql",
+  "databaseScript": "CREATE PROCEDURE [dbo].[GetUsers] AS SELECT 1...",
+  "fileScript": "CREATE PROCEDURE [dbo].[GetUsers] AS SELECT 2...",
+  "unifiedDiff": null,
+  "sideBySideDiff": null,
+  "propertyChanges": [
+    {
+      "propertyName": "DefinitionHash",
+      "databaseValue": "hash-db",
+      "fileValue": "hash-file"
+    }
+  ]
+}
+```
+
+#### Error cases
+
+- **404 Not Found** – comparison does not exist (`error.code = "NOT_FOUND"`).
+- **404 Not Found** – difference ID is not part of the comparison (`error.code = "NOT_FOUND"`).
+
+## 10. What’s next: background monitoring
+
+With Milestone 7 you can:
+
+1. Register a subscription pointing at your DB and folder (via `/api/subscriptions`).
+2. Trigger a comparison manually for that subscription (`POST /api/subscriptions/{id}/compare`).
+3. Browse comparison history and inspect individual comparison summaries.
+4. Drill into per-object differences for any comparison using the endpoints in section 9.
+
+Future milestones will add:
+
+- Background monitoring that uses subscription options (e.g. `autoCompare`, `compareOnFileChange`, `compareOnDatabaseChange`) to run comparisons automatically.
+
+Until then, you can already:
 
 - Validate **connectivity** with `/api/connections/test`.
 - Validate **project visibility and structure** with `/api/folders/validate`.
 - Work with **subscriptions** via `/api/subscriptions` to persist your DB + project configuration and test state transitions (active/paused/delete).
-- Use the **test suite** to confirm that the comparison engine is behaving correctly in-memory.
-
-If you’d like, a next step can be to implement a minimal dev-only comparison endpoint that calls `IComparisonOrchestrator` so you can hit it directly with your own DB and project before the full background pipeline is complete.
+- Trigger and inspect **on-demand comparisons** with the endpoints in sections 8 and 9.
+- Use the **test suite** to confirm that the comparison engine and persistence behave correctly end-to-end.
 

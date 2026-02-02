@@ -16,5 +16,6 @@ public class FileObjectEntry
     public SqlObjectType ObjectType { get; set; }
     public string ContentHash { get; set; } = string.Empty;
     public DateTime LastModified { get; set; }
+	    public string Content { get; set; } = string.Empty;
 }
 

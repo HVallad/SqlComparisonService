@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using SqlSyncService.Contracts;
+using SqlSyncService.Contracts.Comparisons;
+using SqlSyncService.Contracts.Folders;
 using SqlSyncService.Contracts.Subscriptions;
 using SqlSyncService.Domain.Comparisons;
 using SqlSyncService.Domain.Subscriptions;
@@ -15,13 +17,19 @@ public sealed class SubscriptionsController : ControllerBase
 {
 	private readonly ISubscriptionService _subscriptionService;
 	private readonly IComparisonHistoryRepository _historyRepository;
+		private readonly IComparisonOrchestrator _comparisonOrchestrator;
+		private readonly IFolderValidator _folderValidator;
 
 	public SubscriptionsController(
-		ISubscriptionService subscriptionService,
-		IComparisonHistoryRepository historyRepository)
+			ISubscriptionService subscriptionService,
+			IComparisonHistoryRepository historyRepository,
+			IComparisonOrchestrator comparisonOrchestrator,
+			IFolderValidator folderValidator)
 	{
 		_subscriptionService = subscriptionService;
 		_historyRepository = historyRepository;
+			_comparisonOrchestrator = comparisonOrchestrator;
+			_folderValidator = folderValidator;
 	}
 
 	[HttpGet]
@@ -67,6 +75,17 @@ public sealed class SubscriptionsController : ControllerBase
 
 			var last = history.FirstOrDefault();
 
+				var folderValidation = await _folderValidator
+					.ValidateFolderAsync(
+						new ValidateFolderRequest
+						{
+							Path = subscription.Project.RootPath,
+							IncludePatterns = subscription.Project.IncludePatterns,
+							ExcludePatterns = subscription.Project.ExcludePatterns
+						},
+						cancellationToken)
+					.ConfigureAwait(false);
+
 			var item = new SubscriptionListItemResponse
 			{
 				Id = subscription.Id,
@@ -81,7 +100,7 @@ public sealed class SubscriptionsController : ControllerBase
 				Project = new SubscriptionProjectSummaryResponse
 				{
 					Path = subscription.Project.RootPath,
-					SqlFileCount = 0
+						SqlFileCount = folderValidation.SqlFileCount
 				},
 				LastComparedAt = last?.ComparedAt,
 				DifferenceCount = last?.Summary.TotalDifferences ?? 0,
@@ -127,7 +146,18 @@ public sealed class SubscriptionsController : ControllerBase
 		var last = history.FirstOrDefault();
 		var totalComparisons = history.Count;
 
-		var response = MapToDetailResponse(subscription, last, totalComparisons);
+			var folderValidation = await _folderValidator
+				.ValidateFolderAsync(
+					new ValidateFolderRequest
+					{
+						Path = subscription.Project.RootPath,
+						IncludePatterns = subscription.Project.IncludePatterns,
+						ExcludePatterns = subscription.Project.ExcludePatterns
+					},
+					cancellationToken)
+				.ConfigureAwait(false);
+			
+			var response = MapToDetailResponse(subscription, last, totalComparisons, folderValidation.SqlFileCount);
 		return Ok(response);
 	}
 
@@ -140,7 +170,18 @@ public sealed class SubscriptionsController : ControllerBase
 			.CreateAsync(request, cancellationToken)
 			.ConfigureAwait(false);
 
-		var response = MapToDetailResponse(subscription, lastComparison: null, totalComparisons: 0);
+			var folderValidation = await _folderValidator
+				.ValidateFolderAsync(
+					new ValidateFolderRequest
+					{
+						Path = subscription.Project.RootPath,
+						IncludePatterns = subscription.Project.IncludePatterns,
+						ExcludePatterns = subscription.Project.ExcludePatterns
+					},
+					cancellationToken)
+				.ConfigureAwait(false);
+			
+			var response = MapToDetailResponse(subscription, lastComparison: null, totalComparisons: 0, sqlFileCount: folderValidation.SqlFileCount);
 
 		return CreatedAtAction(
 			nameof(GetById),
@@ -165,7 +206,18 @@ public sealed class SubscriptionsController : ControllerBase
 		var last = history.FirstOrDefault();
 		var totalComparisons = history.Count;
 
-		var response = MapToDetailResponse(subscription, last, totalComparisons);
+			var folderValidation = await _folderValidator
+				.ValidateFolderAsync(
+					new ValidateFolderRequest
+					{
+						Path = subscription.Project.RootPath,
+						IncludePatterns = subscription.Project.IncludePatterns,
+						ExcludePatterns = subscription.Project.ExcludePatterns
+					},
+					cancellationToken)
+				.ConfigureAwait(false);
+			
+			var response = MapToDetailResponse(subscription, last, totalComparisons, folderValidation.SqlFileCount);
 		return Ok(response);
 	}
 
@@ -233,10 +285,138 @@ public sealed class SubscriptionsController : ControllerBase
 		return Ok(response);
 	}
 
-	private static SubscriptionDetailResponse MapToDetailResponse(
-		Subscription subscription,
-		ComparisonResult? lastComparison,
-		int totalComparisons)
+		[HttpPost("{id:guid}/compare")]
+		public async Task<ActionResult<TriggerComparisonResponse>> TriggerComparison(
+			Guid id,
+			[FromBody] TriggerComparisonRequest? request,
+			CancellationToken cancellationToken)
+		{
+			var fullComparison = request?.ForceFullComparison ?? false;
+
+			var result = await _comparisonOrchestrator
+				.RunComparisonAsync(id, fullComparison, cancellationToken)
+				.ConfigureAwait(false);
+
+			var startedAt = result.ComparedAt - result.Duration;
+
+			var response = new TriggerComparisonResponse
+			{
+				ComparisonId = result.Id,
+				SubscriptionId = result.SubscriptionId,
+				Status = MapComparisonStatus(result.Status),
+				QueuedAt = startedAt,
+				EstimatedDuration = System.Xml.XmlConvert.ToString(result.Duration)
+			};
+
+			return Accepted(response);
+		}
+
+		[HttpGet("{id:guid}/comparisons")]
+		public async Task<ActionResult<GetSubscriptionComparisonsResponse>> GetComparisons(
+			Guid id,
+			[FromQuery] string? status,
+			[FromQuery] int? limit,
+			[FromQuery] int? offset,
+			CancellationToken cancellationToken)
+		{
+			var subscription = await _subscriptionService
+				.GetByIdAsync(id, cancellationToken)
+				.ConfigureAwait(false);
+
+			if (subscription is null)
+			{
+				var notFound = new ErrorDetail
+				{
+					Code = ErrorCodes.NotFound,
+					Message = $"Subscription '{id}' was not found.",
+					TraceId = HttpContext.TraceIdentifier,
+					Timestamp = DateTime.UtcNow
+				};
+
+				return NotFound(new ErrorResponse { Error = notFound });
+			}
+
+			Func<ComparisonResult, bool> predicate = _ => true;
+			if (!string.IsNullOrWhiteSpace(status))
+			{
+				var normalized = status.Trim().ToLowerInvariant();
+				switch (normalized)
+				{
+					case "completed":
+						predicate = r => r.Status != ComparisonStatus.Error;
+						break;
+					case "failed":
+						predicate = r => r.Status == ComparisonStatus.Error;
+						break;
+					default:
+						var error = new ErrorDetail
+						{
+							Code = ErrorCodes.ValidationError,
+							Message = $"Invalid comparison status '{status}'.",
+							Field = "status",
+							TraceId = HttpContext.TraceIdentifier,
+							Timestamp = DateTime.UtcNow
+						};
+
+						return BadRequest(new ErrorResponse { Error = error });
+				}
+			}
+
+			var all = await _historyRepository
+				.GetBySubscriptionAsync(id, maxCount: null, cancellationToken)
+				.ConfigureAwait(false);
+
+			var filtered = all.Where(predicate).ToList();
+
+			var take = limit.GetValueOrDefault(20);
+			if (take <= 0)
+			{
+				take = 20;
+			}
+
+			var skip = offset.GetValueOrDefault(0);
+			if (skip < 0)
+			{
+				skip = 0;
+			}
+
+			var page = filtered
+				.Skip(skip)
+				.Take(take)
+				.ToList();
+
+			var response = new GetSubscriptionComparisonsResponse
+			{
+				TotalCount = filtered.Count,
+				Limit = take,
+				Offset = skip
+			};
+
+			foreach (var comparison in page)
+			{
+				var startedAt = comparison.ComparedAt - comparison.Duration;
+
+				response.Comparisons.Add(new SubscriptionComparisonListItemResponse
+				{
+					Id = comparison.Id,
+					Status = MapComparisonStatus(comparison.Status),
+					StartedAt = startedAt,
+					CompletedAt = comparison.ComparedAt,
+					Duration = System.Xml.XmlConvert.ToString(comparison.Duration),
+					DifferenceCount = comparison.Summary.TotalDifferences,
+						ObjectsCompared = comparison.Summary.ObjectsCompared,
+					Trigger = "manual"
+				});
+			}
+
+			return Ok(response);
+		}
+
+		private static SubscriptionDetailResponse MapToDetailResponse(
+			Subscription subscription,
+			ComparisonResult? lastComparison,
+			int totalComparisons,
+			int sqlFileCount)
 	{
 		var response = new SubscriptionDetailResponse
 		{
@@ -258,7 +438,7 @@ public sealed class SubscriptionsController : ControllerBase
 				IncludePatterns = subscription.Project.IncludePatterns,
 				ExcludePatterns = subscription.Project.ExcludePatterns,
 				Structure = MapFolderStructure(subscription.Project.Structure),
-				SqlFileCount = 0
+						SqlFileCount = sqlFileCount
 			},
 			Options = new SubscriptionOptionsResponse
 			{
@@ -378,4 +558,16 @@ public sealed class SubscriptionsController : ControllerBase
 
 		return types.ToArray();
 	}
+
+		private static string MapComparisonStatus(ComparisonStatus status)
+		{
+			return status switch
+			{
+				ComparisonStatus.Synchronized => "synchronized",
+				ComparisonStatus.HasDifferences => "has-differences",
+				ComparisonStatus.Error => "error",
+				ComparisonStatus.Partial => "partial",
+				_ => "unknown"
+			};
+		}
 }

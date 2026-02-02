@@ -29,7 +29,11 @@ public enum SqlObjectType
     Constraint,
     UserDefinedType,
     Schema,
-    Synonym
+		    Synonym,
+		    Login,
+		    Role,
+		    Unknown,
+		    User
 }
 
 public enum DifferenceType
