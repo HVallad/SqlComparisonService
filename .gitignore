@@ -1,0 +1,51 @@
+# Build outputs
+bin/
+obj/
+**/bin/
+**/obj/
+
+# Visual Studio / VS Code
+.vs/
+.vscode/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# NuGet
+packages/
+*.nupkg
+project.lock.json
+*.nuget.props
+*.nuget.targets
+
+# Rider / ReSharper / other IDE
+.idea/
+_ReSharper*/
+*.DotSettings.user
+
+# Logs
+logs/
+*.log
+
+# Local databases and data files
+*.db
+*.mdf
+*.ldf
+src/SqlSyncService/Data/sqlsync.db
+src/SqlSyncService/Data/sqlsync-log.db
+
+# ASP.NET / configuration overrides
+appsettings.Development.json.user
+
+# OS generated files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Other temporary files
+*.swp
+*.tmp
+*.bak
+*.orig
+
