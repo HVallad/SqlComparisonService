@@ -24,21 +24,21 @@ public class LiteDbContext
     private void ConfigureCollections()
     {
         // Subscriptions
-			// LiteDB automatically creates a unique index on the Id (primary key) field,
-			// so we only need an additional non-unique index on Name for lookup scenarios.
-			Subscriptions.EnsureIndex(nameof(Subscription.Name));
+        // LiteDB automatically creates a unique index on the Id (primary key) field,
+        // so we only need an additional non-unique index on Name for lookup scenarios.
+        Subscriptions.EnsureIndex(nameof(Subscription.Name));
 
         // Schema snapshots
-		SchemaSnapshots.EnsureIndex(nameof(SchemaSnapshot.SubscriptionId));
-		SchemaSnapshots.EnsureIndex(nameof(SchemaSnapshot.CapturedAt));
+        SchemaSnapshots.EnsureIndex(nameof(SchemaSnapshot.SubscriptionId));
+        SchemaSnapshots.EnsureIndex(nameof(SchemaSnapshot.CapturedAt));
 
         // Comparison history
-		ComparisonHistory.EnsureIndex(nameof(ComparisonResult.SubscriptionId));
-		ComparisonHistory.EnsureIndex(nameof(ComparisonResult.ComparedAt));
+        ComparisonHistory.EnsureIndex(nameof(ComparisonResult.SubscriptionId));
+        ComparisonHistory.EnsureIndex(nameof(ComparisonResult.ComparedAt));
 
         // Pending changes
-		PendingChanges.EnsureIndex(nameof(DetectedChange.SubscriptionId));
-		PendingChanges.EnsureIndex(nameof(DetectedChange.IsProcessed));
+        PendingChanges.EnsureIndex(nameof(DetectedChange.SubscriptionId));
+        PendingChanges.EnsureIndex(nameof(DetectedChange.IsProcessed));
     }
 }
 

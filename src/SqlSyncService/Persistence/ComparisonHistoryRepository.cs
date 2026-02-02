@@ -41,10 +41,10 @@ public class ComparisonHistoryRepository : IComparisonHistoryRepository
         return Task.FromResult<IReadOnlyList<ComparisonResult>>(list);
     }
 
-	    public Task<int> DeleteBySubscriptionAsync(Guid subscriptionId, CancellationToken cancellationToken = default)
-	    {
-	        var deleted = _context.ComparisonHistory.DeleteMany(r => r.SubscriptionId == subscriptionId);
-	        return Task.FromResult(deleted);
-	    }
+    public Task<int> DeleteBySubscriptionAsync(Guid subscriptionId, CancellationToken cancellationToken = default)
+    {
+        var deleted = _context.ComparisonHistory.DeleteMany(r => r.SubscriptionId == subscriptionId);
+        return Task.FromResult(deleted);
+    }
 }
 

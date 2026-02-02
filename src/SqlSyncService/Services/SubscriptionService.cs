@@ -227,17 +227,17 @@ public sealed class SubscriptionService : ISubscriptionService
         var subscription = await _subscriptions.GetByIdAsync(id, cancellationToken).ConfigureAwait(false)
                           ?? throw new SubscriptionNotFoundException(id);
 
-	        if (subscription.State != SubscriptionState.Paused)
-	        {
-	            throw new SubscriptionConflictException($"Subscription '{id}' is not paused.", "state");
-	        }
+        if (subscription.State != SubscriptionState.Paused)
+        {
+            throw new SubscriptionConflictException($"Subscription '{id}' is not paused.", "state");
+        }
 
-	        subscription.State = SubscriptionState.Active;
-	        subscription.ResumedAt = DateTime.UtcNow;
-	        subscription.UpdatedAt = DateTime.UtcNow;
+        subscription.State = SubscriptionState.Active;
+        subscription.ResumedAt = DateTime.UtcNow;
+        subscription.UpdatedAt = DateTime.UtcNow;
 
-	        await _subscriptions.UpdateAsync(subscription, cancellationToken).ConfigureAwait(false);
-	        return subscription;
+        await _subscriptions.UpdateAsync(subscription, cancellationToken).ConfigureAwait(false);
+        return subscription;
     }
 
     private static AuthenticationType MapAuthType(string authType)

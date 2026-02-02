@@ -71,17 +71,17 @@ public sealed class GlobalExceptionHandlingMiddleware
                     Timestamp = DateTime.UtcNow
                 });
 
-				case ComparisonInProgressException inProgress:
-					_logger.LogWarning(ex, "Handled comparison in progress: {Message}", ex.Message);
-					return (HttpStatusCode.Conflict, new ErrorDetail
-					{
-						Code = ErrorCodes.ComparisonInProgress,
-						Message = inProgress.Message,
-						Details = null,
-						Field = null,
-						TraceId = context.TraceIdentifier,
-						Timestamp = DateTime.UtcNow
-					});
+            case ComparisonInProgressException inProgress:
+                _logger.LogWarning(ex, "Handled comparison in progress: {Message}", ex.Message);
+                return (HttpStatusCode.Conflict, new ErrorDetail
+                {
+                    Code = ErrorCodes.ComparisonInProgress,
+                    Message = inProgress.Message,
+                    Details = null,
+                    Field = null,
+                    TraceId = context.TraceIdentifier,
+                    Timestamp = DateTime.UtcNow
+                });
 
             default:
                 _logger.LogError(ex, "Unhandled exception occurred while processing the request.");

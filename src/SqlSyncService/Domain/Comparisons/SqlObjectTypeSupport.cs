@@ -20,7 +20,8 @@ public static class SqlObjectTypeSupport
         SqlObjectType.InlineTableValuedFunction,
         SqlObjectType.Trigger,
         SqlObjectType.User,
-        SqlObjectType.Role
+        SqlObjectType.Role,
+        SqlObjectType.Index
     };
 
     /// <summary>

@@ -10,12 +10,12 @@ public class Subscription
     public ProjectFolder Project { get; set; } = new();
     public SubscriptionState State { get; set; } = SubscriptionState.Active;
     public ComparisonOptions Options { get; set; } = new();
-	    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
-	    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? LastComparedAt { get; set; }
     public DateTime? LastSyncedAt { get; set; }
-	    public DateTime? PausedAt { get; set; }
-	    public DateTime? ResumedAt { get; set; }
+    public DateTime? PausedAt { get; set; }
+    public DateTime? ResumedAt { get; set; }
 
     public bool IsActive() => State == SubscriptionState.Active;
 

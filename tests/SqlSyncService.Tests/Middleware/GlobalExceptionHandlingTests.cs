@@ -35,23 +35,23 @@ public class GlobalExceptionHandlingTests : IClassFixture<WebApplicationFactory<
         Assert.False(string.IsNullOrWhiteSpace(error.TraceId));
     }
 
-		[Fact]
-		public async Task ComparisonInProgressException_Is_Translated_To_Conflict_Response()
-		{
-			// Arrange
-			using var client = _factory.CreateClient();
+    [Fact]
+    public async Task ComparisonInProgressException_Is_Translated_To_Conflict_Response()
+    {
+        // Arrange
+        using var client = _factory.CreateClient();
 
-			// Act
-			var response = await client.GetAsync("/api/diagnostics/throw-comparison-in-progress");
+        // Act
+        var response = await client.GetAsync("/api/diagnostics/throw-comparison-in-progress");
 
-			// Assert
-			Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
-			Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
+        // Assert
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
 
-			var payload = await response.Content.ReadFromJsonAsync<ErrorResponse>();
-			Assert.NotNull(payload);
+        var payload = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+        Assert.NotNull(payload);
 
-			var error = payload!.Error;
-			Assert.Equal(ErrorCodes.ComparisonInProgress, error.Code);
-		}
+        var error = payload!.Error;
+        Assert.Equal(ErrorCodes.ComparisonInProgress, error.Code);
+    }
 }

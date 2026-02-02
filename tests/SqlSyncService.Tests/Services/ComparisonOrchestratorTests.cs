@@ -77,106 +77,106 @@ public class ComparisonOrchestratorTests
         Assert.Equal(1, dbBuilder.CallCount);
         Assert.Equal(1, result.Summary.TotalDifferences);
         Assert.Equal(1, result.Summary.Additions);
-	        Assert.Equal(0, result.Summary.ObjectsCompared);
-	        Assert.Equal(0, result.Summary.ObjectsUnchanged);
+        Assert.Equal(0, result.Summary.ObjectsCompared);
+        Assert.Equal(0, result.Summary.ObjectsUnchanged);
     }
 
-	    [Fact]
-	    public async Task RunComparisonAsync_Populates_Unsupported_Object_Counts_And_List()
-	    {
-	        // Arrange
-	        var subscriptionId = Guid.NewGuid();
-	        var subscription = new Subscription
-	        {
-	            Id = subscriptionId,
-	            Name = "Test",
-	            Database = new DatabaseConnection { Database = "Db" },
-	            Project = new ProjectFolder { RootPath = "." },
-	            Options = new ComparisonOptions()
-	        };
+    [Fact]
+    public async Task RunComparisonAsync_Populates_Unsupported_Object_Counts_And_List()
+    {
+        // Arrange
+        var subscriptionId = Guid.NewGuid();
+        var subscription = new Subscription
+        {
+            Id = subscriptionId,
+            Name = "Test",
+            Database = new DatabaseConnection { Database = "Db" },
+            Project = new ProjectFolder { RootPath = "." },
+            Options = new ComparisonOptions()
+        };
 
-	        var subscriptions = new InMemorySubscriptionRepository { Subscription = subscription };
-	        var snapshots = new InMemorySchemaSnapshotRepository();
-	        var history = new InMemoryComparisonHistoryRepository();
+        var subscriptions = new InMemorySubscriptionRepository { Subscription = subscription };
+        var snapshots = new InMemorySchemaSnapshotRepository();
+        var history = new InMemoryComparisonHistoryRepository();
 
-	        var dbBuilder = new StubDatabaseModelBuilder
-	        {
-	            SnapshotToReturn = new SchemaSnapshot
-	            {
-	                SubscriptionId = subscriptionId,
-	                CapturedAt = DateTime.UtcNow,
-	                Objects =
-	                {
-	                    new SchemaObjectSummary
-	                    {
-	                        SchemaName = "dbo",
-	                        ObjectName = "Users",
-	                        ObjectType = SqlObjectType.Table,
-	                        DefinitionHash = "hash-users-db"
-	                    },
-	                    new SchemaObjectSummary
-	                    {
-	                        SchemaName = "master",
-	                        ObjectName = "AppLogin",
-	                        ObjectType = SqlObjectType.Login,
-	                        DefinitionHash = string.Empty
-	                    }
-	                }
-	            }
-	        };
+        var dbBuilder = new StubDatabaseModelBuilder
+        {
+            SnapshotToReturn = new SchemaSnapshot
+            {
+                SubscriptionId = subscriptionId,
+                CapturedAt = DateTime.UtcNow,
+                Objects =
+                    {
+                        new SchemaObjectSummary
+                        {
+                            SchemaName = "dbo",
+                            ObjectName = "Users",
+                            ObjectType = SqlObjectType.Table,
+                            DefinitionHash = "hash-users-db"
+                        },
+                        new SchemaObjectSummary
+                        {
+                            SchemaName = "master",
+                            ObjectName = "AppLogin",
+                            ObjectType = SqlObjectType.Login,
+                            DefinitionHash = string.Empty
+                        }
+                    }
+            }
+        };
 
-	        var fileBuilder = new StubFileModelBuilder
-	        {
-	            CacheToReturn = new FileModelCache
-	            {
-	                SubscriptionId = subscriptionId,
-	                CapturedAt = DateTime.UtcNow,
-	                FileEntries =
-	                {
-	                    ["dbo.Users.sql"] = new FileObjectEntry
-	                    {
-	                        FilePath = "dbo/Tables/Users.sql",
-	                        ObjectName = "Users",
-	                        ObjectType = SqlObjectType.Table,
-	                        ContentHash = "hash-users-file",
-	                        LastModified = DateTime.UtcNow
-	                    },
-	                    ["Misc/Unknown.sql"] = new FileObjectEntry
-	                    {
-	                        FilePath = "Misc/Unknown.sql",
-	                        ObjectName = "SomeArtifact",
-	                        ObjectType = SqlObjectType.Unknown,
-	                        ContentHash = "hash-unknown-file",
-	                        LastModified = DateTime.UtcNow
-	                    }
-	                }
-	            }
-	        };
+        var fileBuilder = new StubFileModelBuilder
+        {
+            CacheToReturn = new FileModelCache
+            {
+                SubscriptionId = subscriptionId,
+                CapturedAt = DateTime.UtcNow,
+                FileEntries =
+                    {
+                        ["dbo.Users.sql"] = new FileObjectEntry
+                        {
+                            FilePath = "dbo/Tables/Users.sql",
+                            ObjectName = "Users",
+                            ObjectType = SqlObjectType.Table,
+                            ContentHash = "hash-users-file",
+                            LastModified = DateTime.UtcNow
+                        },
+                        ["Misc/Unknown.sql"] = new FileObjectEntry
+                        {
+                            FilePath = "Misc/Unknown.sql",
+                            ObjectName = "SomeArtifact",
+                            ObjectType = SqlObjectType.Unknown,
+                            ContentHash = "hash-unknown-file",
+                            LastModified = DateTime.UtcNow
+                        }
+                    }
+            }
+        };
 
-	        var comparer = new StubSchemaComparer { DifferencesToReturn = Array.Empty<SchemaDifference>() };
-	        var options = CreateOptions(1);
+        var comparer = new StubSchemaComparer { DifferencesToReturn = Array.Empty<SchemaDifference>() };
+        var options = CreateOptions(1);
 
-	        var orchestrator = new ComparisonOrchestrator(subscriptions, snapshots, history, dbBuilder, fileBuilder, comparer, options);
+        var orchestrator = new ComparisonOrchestrator(subscriptions, snapshots, history, dbBuilder, fileBuilder, comparer, options);
 
-	        // Act
-	        var result = await orchestrator.RunComparisonAsync(subscriptionId, fullComparison: true);
+        // Act
+        var result = await orchestrator.RunComparisonAsync(subscriptionId, fullComparison: true);
 
-	        // Assert
-	        Assert.Equal(ComparisonStatus.Synchronized, result.Status);
-	        Assert.Equal(1, result.Summary.UnsupportedDatabaseObjectCount);
-	        Assert.Equal(1, result.Summary.UnsupportedFileObjectCount);
-	        Assert.Equal(1, result.Summary.ObjectsCompared);
-	        Assert.Equal(1, result.Summary.ObjectsUnchanged);
-	
-	        Assert.Equal(2, result.UnsupportedObjects.Count);
-	        var login = Assert.Single(result.UnsupportedObjects.Where(o => o.ObjectType == SqlObjectType.Login));
-	        Assert.Equal(DifferenceSource.Database, login.Source);
-	        Assert.Equal("AppLogin", login.ObjectName);
-	
-	        var unknown = Assert.Single(result.UnsupportedObjects.Where(o => o.ObjectType == SqlObjectType.Unknown));
-	        Assert.Equal(DifferenceSource.FileSystem, unknown.Source);
-	        Assert.Equal("SomeArtifact", unknown.ObjectName);
-	    }
+        // Assert
+        Assert.Equal(ComparisonStatus.Synchronized, result.Status);
+        Assert.Equal(1, result.Summary.UnsupportedDatabaseObjectCount);
+        Assert.Equal(1, result.Summary.UnsupportedFileObjectCount);
+        Assert.Equal(1, result.Summary.ObjectsCompared);
+        Assert.Equal(1, result.Summary.ObjectsUnchanged);
+
+        Assert.Equal(2, result.UnsupportedObjects.Count);
+        var login = Assert.Single(result.UnsupportedObjects.Where(o => o.ObjectType == SqlObjectType.Login));
+        Assert.Equal(DifferenceSource.Database, login.Source);
+        Assert.Equal("AppLogin", login.ObjectName);
+
+        var unknown = Assert.Single(result.UnsupportedObjects.Where(o => o.ObjectType == SqlObjectType.Unknown));
+        Assert.Equal(DifferenceSource.FileSystem, unknown.Source);
+        Assert.Equal("SomeArtifact", unknown.ObjectName);
+    }
 
     [Fact]
     public async Task RunComparisonAsync_Incremental_Uses_Existing_Snapshot()
@@ -295,41 +295,41 @@ public class ComparisonOrchestratorTests
         }
     }
 
-	    	private sealed class InMemoryComparisonHistoryRepository : IComparisonHistoryRepository
-	    	{
-	    	    public List<ComparisonResult> Results { get; } = new();
-	    	
-	    	    public Task AddAsync(ComparisonResult result, CancellationToken cancellationToken = default)
-	    	    {
-	    	        Results.Add(result);
-	    	        return Task.CompletedTask;
-	    	    }
-	    	
-	    	    public Task<ComparisonResult?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) =>
-	    	        Task.FromResult<ComparisonResult?>(Results.FirstOrDefault(r => r.Id == id));
-	    	
-	    	    public Task<IReadOnlyList<ComparisonResult>> GetBySubscriptionAsync(Guid subscriptionId, int? maxCount = null, CancellationToken cancellationToken = default)
-	    	    {
-	    	        IEnumerable<ComparisonResult> query = Results
-	    	            .Where(r => r.SubscriptionId == subscriptionId)
-	    	            .OrderByDescending(r => r.ComparedAt);
-	    	
-	    	        if (maxCount.HasValue)
-	    	        {
-	    	            query = query.Take(maxCount.Value);
-	    	        }
-	    	
-	    	        return Task.FromResult<IReadOnlyList<ComparisonResult>>(query.ToList());
-	    	    }
-	    	
-	    	    public Task<int> DeleteBySubscriptionAsync(Guid subscriptionId, CancellationToken cancellationToken = default)
-	    	    {
-	    	        var before = Results.Count;
-	    	        Results.RemoveAll(r => r.SubscriptionId == subscriptionId);
-	    	        var removed = before - Results.Count;
-	    	        return Task.FromResult(removed);
-	    	    }
-	    	}
+    private sealed class InMemoryComparisonHistoryRepository : IComparisonHistoryRepository
+    {
+        public List<ComparisonResult> Results { get; } = new();
+
+        public Task AddAsync(ComparisonResult result, CancellationToken cancellationToken = default)
+        {
+            Results.Add(result);
+            return Task.CompletedTask;
+        }
+
+        public Task<ComparisonResult?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) =>
+            Task.FromResult<ComparisonResult?>(Results.FirstOrDefault(r => r.Id == id));
+
+        public Task<IReadOnlyList<ComparisonResult>> GetBySubscriptionAsync(Guid subscriptionId, int? maxCount = null, CancellationToken cancellationToken = default)
+        {
+            IEnumerable<ComparisonResult> query = Results
+                .Where(r => r.SubscriptionId == subscriptionId)
+                .OrderByDescending(r => r.ComparedAt);
+
+            if (maxCount.HasValue)
+            {
+                query = query.Take(maxCount.Value);
+            }
+
+            return Task.FromResult<IReadOnlyList<ComparisonResult>>(query.ToList());
+        }
+
+        public Task<int> DeleteBySubscriptionAsync(Guid subscriptionId, CancellationToken cancellationToken = default)
+        {
+            var before = Results.Count;
+            Results.RemoveAll(r => r.SubscriptionId == subscriptionId);
+            var removed = before - Results.Count;
+            return Task.FromResult(removed);
+        }
+    }
 
     private sealed class StubDatabaseModelBuilder : IDatabaseModelBuilder
     {

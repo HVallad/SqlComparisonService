@@ -102,10 +102,10 @@ builder.Services.AddHealthChecks();
 builder.Services.AddScoped<IDatabaseConnectionTester, DatabaseConnectionTester>();
 builder.Services.AddScoped<IFolderValidator, FolderValidator>();
 builder.Services.AddScoped<ISubscriptionService, SubscriptionService>();
-		builder.Services.AddScoped<IDatabaseModelBuilder, DatabaseModelBuilder>();
-		builder.Services.AddScoped<IFileModelBuilder, FileModelBuilder>();
-		builder.Services.AddScoped<ISchemaComparer, SchemaComparer>();
-		builder.Services.AddScoped<IComparisonOrchestrator, ComparisonOrchestrator>();
+builder.Services.AddScoped<IDatabaseModelBuilder, DatabaseModelBuilder>();
+builder.Services.AddScoped<IFileModelBuilder, FileModelBuilder>();
+builder.Services.AddScoped<ISchemaComparer, SchemaComparer>();
+builder.Services.AddScoped<IComparisonOrchestrator, ComparisonOrchestrator>();
 
 // Swagger/OpenAPI
 builder.Services.AddEndpointsApiExplorer();
@@ -119,8 +119,8 @@ app.UseMiddleware<GlobalExceptionHandlingMiddleware>();
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
-	app.UseSwagger();
-	app.UseSwaggerUI();
+    app.UseSwagger();
+    app.UseSwaggerUI();
 }
 
 app.UseHttpsRedirection();
