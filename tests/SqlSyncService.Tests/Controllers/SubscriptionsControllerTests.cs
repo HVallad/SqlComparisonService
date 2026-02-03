@@ -384,6 +384,327 @@ public class SubscriptionsControllerTests : IClassFixture<WebApplicationFactory<
     }
 
     [Fact]
+    public async Task DeleteSubscription_Returns_NotFound_When_Subscription_Does_Not_Exist()
+    {
+        // Arrange
+        var factory = CreateFactoryWithInMemoryLiteDb();
+        using var client = factory.CreateClient();
+        var missingId = Guid.NewGuid();
+
+        // Act
+        var response = await client.DeleteAsync($"/api/subscriptions/{missingId}?deleteHistory=false");
+
+        // Assert
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+
+        var error = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+        Assert.NotNull(error);
+        Assert.Equal(ErrorCodes.NotFound, error!.Error.Code);
+    }
+
+    [Fact]
+    public async Task UpdateSubscription_Updates_Name_And_Returns_Updated_Subscription()
+    {
+        // Arrange
+        var factory = CreateFactoryWithInMemoryLiteDb();
+        using var client = factory.CreateClient();
+
+        var createRequest = new CreateSubscriptionRequest
+        {
+            Name = "Original Name",
+            Database = new CreateSubscriptionDatabaseConfig
+            {
+                Server = "localhost",
+                Database = "TestDb",
+                AuthType = "windows"
+            },
+            Project = new CreateSubscriptionProjectConfig
+            {
+                Path = "C:/projects/update",
+                Structure = "by-type"
+            },
+            Options = new CreateSubscriptionOptionsConfig()
+        };
+
+        var createResponse = await client.PostAsJsonAsync("/api/subscriptions", createRequest);
+        createResponse.EnsureSuccessStatusCode();
+        var created = await createResponse.Content.ReadFromJsonAsync<SubscriptionDetailResponse>();
+        Assert.NotNull(created);
+
+        // Act - update name
+        var updateRequest = new UpdateSubscriptionRequest
+        {
+            Name = "Updated Name"
+        };
+        var updateResponse = await client.PutAsJsonAsync($"/api/subscriptions/{created!.Id}", updateRequest);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, updateResponse.StatusCode);
+
+        var updated = await updateResponse.Content.ReadFromJsonAsync<SubscriptionDetailResponse>();
+        Assert.NotNull(updated);
+        Assert.Equal("Updated Name", updated!.Name);
+        Assert.Equal(created.Id, updated.Id);
+        // Other fields should remain unchanged
+        Assert.Equal(createRequest.Database.Server, updated.Database.Server);
+        Assert.Equal(createRequest.Project.Path, updated.Project.Path);
+    }
+
+    [Fact]
+    public async Task UpdateSubscription_Updates_Database_Config()
+    {
+        // Arrange
+        var factory = CreateFactoryWithInMemoryLiteDb();
+        using var client = factory.CreateClient();
+
+        var createRequest = new CreateSubscriptionRequest
+        {
+            Name = "DB Config Test",
+            Database = new CreateSubscriptionDatabaseConfig
+            {
+                Server = "original-server",
+                Database = "OriginalDb",
+                AuthType = "windows"
+            },
+            Project = new CreateSubscriptionProjectConfig
+            {
+                Path = "C:/projects/db-update",
+                Structure = "by-type"
+            },
+            Options = new CreateSubscriptionOptionsConfig()
+        };
+
+        var createResponse = await client.PostAsJsonAsync("/api/subscriptions", createRequest);
+        createResponse.EnsureSuccessStatusCode();
+        var created = await createResponse.Content.ReadFromJsonAsync<SubscriptionDetailResponse>();
+        Assert.NotNull(created);
+
+        // Act - update database config
+        var updateRequest = new UpdateSubscriptionRequest
+        {
+            Database = new UpdateSubscriptionDatabaseConfig
+            {
+                Server = "new-server",
+                Database = "NewDb",
+                TrustServerCertificate = true,
+                ConnectionTimeoutSeconds = 60
+            }
+        };
+        var updateResponse = await client.PutAsJsonAsync($"/api/subscriptions/{created!.Id}", updateRequest);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, updateResponse.StatusCode);
+
+        var updated = await updateResponse.Content.ReadFromJsonAsync<SubscriptionDetailResponse>();
+        Assert.NotNull(updated);
+        Assert.Equal("new-server", updated!.Database.Server);
+        Assert.Equal("NewDb", updated.Database.Database);
+        // TrustServerCertificate and ConnectionTimeoutSeconds are not exposed in the response
+        // but are stored internally in the domain model
+    }
+
+    [Fact]
+    public async Task UpdateSubscription_Updates_Project_Config()
+    {
+        // Arrange
+        var factory = CreateFactoryWithInMemoryLiteDb();
+        using var client = factory.CreateClient();
+
+        var createRequest = new CreateSubscriptionRequest
+        {
+            Name = "Project Config Test",
+            Database = new CreateSubscriptionDatabaseConfig
+            {
+                Server = "localhost",
+                Database = "TestDb",
+                AuthType = "windows"
+            },
+            Project = new CreateSubscriptionProjectConfig
+            {
+                Path = "C:/projects/original",
+                Structure = "by-type"
+            },
+            Options = new CreateSubscriptionOptionsConfig()
+        };
+
+        var createResponse = await client.PostAsJsonAsync("/api/subscriptions", createRequest);
+        createResponse.EnsureSuccessStatusCode();
+        var created = await createResponse.Content.ReadFromJsonAsync<SubscriptionDetailResponse>();
+        Assert.NotNull(created);
+
+        // Act - update project config
+        var updateRequest = new UpdateSubscriptionRequest
+        {
+            Project = new UpdateSubscriptionProjectConfig
+            {
+                Path = "C:/projects/new-path",
+                IncludePatterns = new[] { "*.sql" },
+                ExcludePatterns = new[] { "*test*" },
+                Structure = "flat"
+            }
+        };
+        var updateResponse = await client.PutAsJsonAsync($"/api/subscriptions/{created!.Id}", updateRequest);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, updateResponse.StatusCode);
+
+        var updated = await updateResponse.Content.ReadFromJsonAsync<SubscriptionDetailResponse>();
+        Assert.NotNull(updated);
+        Assert.Equal("C:/projects/new-path", updated!.Project.Path);
+        Assert.Contains("*.sql", updated.Project.IncludePatterns);
+        Assert.Contains("*test*", updated.Project.ExcludePatterns);
+        Assert.Equal("flat", updated.Project.Structure);
+    }
+
+    [Fact]
+    public async Task UpdateSubscription_Updates_Options_Config()
+    {
+        // Arrange
+        var factory = CreateFactoryWithInMemoryLiteDb();
+        using var client = factory.CreateClient();
+
+        var createRequest = new CreateSubscriptionRequest
+        {
+            Name = "Options Config Test",
+            Database = new CreateSubscriptionDatabaseConfig
+            {
+                Server = "localhost",
+                Database = "TestDb",
+                AuthType = "windows"
+            },
+            Project = new CreateSubscriptionProjectConfig
+            {
+                Path = "C:/projects/options",
+                Structure = "by-type"
+            },
+            Options = new CreateSubscriptionOptionsConfig
+            {
+                AutoCompare = false,
+                IgnoreWhitespace = false
+            }
+        };
+
+        var createResponse = await client.PostAsJsonAsync("/api/subscriptions", createRequest);
+        createResponse.EnsureSuccessStatusCode();
+        var created = await createResponse.Content.ReadFromJsonAsync<SubscriptionDetailResponse>();
+        Assert.NotNull(created);
+
+        // Act - update options
+        var updateRequest = new UpdateSubscriptionRequest
+        {
+            Options = new UpdateSubscriptionOptionsConfig
+            {
+                AutoCompare = true,
+                IgnoreWhitespace = true,
+                IgnoreComments = true,
+                ObjectTypes = new[] { "table", "view", "stored-procedure" }
+            }
+        };
+        var updateResponse = await client.PutAsJsonAsync($"/api/subscriptions/{created!.Id}", updateRequest);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, updateResponse.StatusCode);
+
+        var updated = await updateResponse.Content.ReadFromJsonAsync<SubscriptionDetailResponse>();
+        Assert.NotNull(updated);
+        Assert.True(updated!.Options.AutoCompare);
+        Assert.True(updated.Options.IgnoreWhitespace);
+        Assert.True(updated.Options.IgnoreComments);
+        Assert.Contains("table", updated.Options.ObjectTypes);
+        Assert.Contains("view", updated.Options.ObjectTypes);
+        Assert.Contains("stored-procedure", updated.Options.ObjectTypes);
+    }
+
+    [Fact]
+    public async Task UpdateSubscription_Returns_NotFound_When_Subscription_Does_Not_Exist()
+    {
+        // Arrange
+        var factory = CreateFactoryWithInMemoryLiteDb();
+        using var client = factory.CreateClient();
+        var missingId = Guid.NewGuid();
+
+        var updateRequest = new UpdateSubscriptionRequest
+        {
+            Name = "Should fail"
+        };
+
+        // Act
+        var response = await client.PutAsJsonAsync($"/api/subscriptions/{missingId}", updateRequest);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+
+        var error = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+        Assert.NotNull(error);
+        Assert.Equal(ErrorCodes.NotFound, error!.Error.Code);
+    }
+
+    [Fact]
+    public async Task UpdateSubscription_Returns_Conflict_When_Name_Already_Exists()
+    {
+        // Arrange
+        var factory = CreateFactoryWithInMemoryLiteDb();
+        using var client = factory.CreateClient();
+
+        // Create first subscription
+        var firstRequest = new CreateSubscriptionRequest
+        {
+            Name = "First Sub",
+            Database = new CreateSubscriptionDatabaseConfig
+            {
+                Server = "localhost",
+                Database = "Db1",
+                AuthType = "windows"
+            },
+            Project = new CreateSubscriptionProjectConfig
+            {
+                Path = "C:/projects/first",
+                Structure = "by-type"
+            },
+            Options = new CreateSubscriptionOptionsConfig()
+        };
+        var firstResponse = await client.PostAsJsonAsync("/api/subscriptions", firstRequest);
+        firstResponse.EnsureSuccessStatusCode();
+
+        // Create second subscription
+        var secondRequest = new CreateSubscriptionRequest
+        {
+            Name = "Second Sub",
+            Database = new CreateSubscriptionDatabaseConfig
+            {
+                Server = "localhost",
+                Database = "Db2",
+                AuthType = "windows"
+            },
+            Project = new CreateSubscriptionProjectConfig
+            {
+                Path = "C:/projects/second",
+                Structure = "by-type"
+            },
+            Options = new CreateSubscriptionOptionsConfig()
+        };
+        var secondResponse = await client.PostAsJsonAsync("/api/subscriptions", secondRequest);
+        secondResponse.EnsureSuccessStatusCode();
+        var second = await secondResponse.Content.ReadFromJsonAsync<SubscriptionDetailResponse>();
+        Assert.NotNull(second);
+
+        // Act - try to update second subscription to have the same name as first
+        var updateRequest = new UpdateSubscriptionRequest
+        {
+            Name = "First Sub"
+        };
+        var updateResponse = await client.PutAsJsonAsync($"/api/subscriptions/{second!.Id}", updateRequest);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.Conflict, updateResponse.StatusCode);
+
+        var error = await updateResponse.Content.ReadFromJsonAsync<ErrorResponse>();
+        Assert.NotNull(error);
+        Assert.Equal(ErrorCodes.Conflict, error!.Error.Code);
+        Assert.Equal("name", error.Error.Field);
+    }
+
+    [Fact]
     public async Task Pause_And_Resume_Subscription_Succeeds()
     {
         // Arrange

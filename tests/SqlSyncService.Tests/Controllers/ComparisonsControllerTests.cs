@@ -226,6 +226,107 @@ public class ComparisonsControllerTests : IClassFixture<WebApplicationFactory<Pr
     }
 
     [Fact]
+    public async Task GetUnsupportedObjects_Returns_NotFound_When_Comparison_Does_Not_Exist()
+    {
+        // Arrange
+        var factory = CreateFactoryWithInMemoryLiteDb();
+        using var client = factory.CreateClient();
+
+        var missingId = Guid.NewGuid();
+
+        // Act
+        var response = await client.GetAsync($"/api/comparisons/{missingId}/unsupported-objects");
+
+        // Assert
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+
+        var error = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+        Assert.NotNull(error);
+        Assert.Equal(ErrorCodes.NotFound, error!.Error.Code);
+    }
+
+    [Fact]
+    public async Task GetUnsupportedObjects_Returns_Empty_List_When_No_Unsupported_Objects()
+    {
+        // Arrange
+        var factory = CreateFactoryWithInMemoryLiteDb();
+        using var client = factory.CreateClient();
+        var comparisonId = Guid.NewGuid();
+        var subscriptionId = Guid.NewGuid();
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var history = scope.ServiceProvider.GetRequiredService<IComparisonHistoryRepository>();
+
+            var comparison = new ComparisonResult
+            {
+                Id = comparisonId,
+                SubscriptionId = subscriptionId,
+                ComparedAt = DateTime.UtcNow,
+                Duration = TimeSpan.FromSeconds(5),
+                Status = ComparisonStatus.Synchronized,
+                Summary = new ComparisonSummary(),
+                UnsupportedObjects = new List<UnsupportedObject>()
+            };
+
+            await history.AddAsync(comparison);
+        }
+
+        // Act
+        var response = await client.GetAsync($"/api/comparisons/{comparisonId}/unsupported-objects");
+
+        // Assert
+        response.EnsureSuccessStatusCode();
+
+        var body = await response.Content.ReadFromJsonAsync<GetUnsupportedObjectsResponse>();
+        Assert.NotNull(body);
+        Assert.Equal(comparisonId, body!.ComparisonId);
+        Assert.Equal(0, body.TotalCount);
+        Assert.Equal(0, body.DatabaseCount);
+        Assert.Equal(0, body.FileCount);
+        Assert.Empty(body.Objects);
+    }
+
+    [Fact]
+    public async Task GetUnsupportedObjects_Handles_Null_UnsupportedObjects_List()
+    {
+        // Arrange
+        var factory = CreateFactoryWithInMemoryLiteDb();
+        using var client = factory.CreateClient();
+        var comparisonId = Guid.NewGuid();
+        var subscriptionId = Guid.NewGuid();
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var history = scope.ServiceProvider.GetRequiredService<IComparisonHistoryRepository>();
+
+            // Create comparison without setting UnsupportedObjects (will be null)
+            var comparison = new ComparisonResult
+            {
+                Id = comparisonId,
+                SubscriptionId = subscriptionId,
+                ComparedAt = DateTime.UtcNow,
+                Duration = TimeSpan.FromSeconds(5),
+                Status = ComparisonStatus.Synchronized,
+                Summary = new ComparisonSummary()
+            };
+
+            await history.AddAsync(comparison);
+        }
+
+        // Act
+        var response = await client.GetAsync($"/api/comparisons/{comparisonId}/unsupported-objects");
+
+        // Assert
+        response.EnsureSuccessStatusCode();
+
+        var body = await response.Content.ReadFromJsonAsync<GetUnsupportedObjectsResponse>();
+        Assert.NotNull(body);
+        Assert.Equal(0, body!.TotalCount);
+        Assert.Empty(body.Objects);
+    }
+
+    [Fact]
     public async Task GetDifferences_Returns_All_Differences_When_No_Filters()
     {
         // Arrange
