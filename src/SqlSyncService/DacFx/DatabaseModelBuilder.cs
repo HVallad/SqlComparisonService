@@ -204,6 +204,10 @@ public class DatabaseModelBuilder : IDatabaseModelBuilder
         // constraint stripping, then comparison-oriented normalization. This
         // ensures that differences in default/primary key constraints or
         // trailing commas do not cause false table Modify differences.
+        //
+        // For triggers, DacFx may return additional statements after the trigger
+        // definition (e.g., ALTER TABLE ... ENABLE TRIGGER, DISABLE TRIGGER).
+        // We truncate at the first GO to get just the trigger definition.
         string definitionScript;
         if (type == SqlObjectType.Table)
         {
@@ -211,6 +215,12 @@ public class DatabaseModelBuilder : IDatabaseModelBuilder
             var firstBatch = SqlScriptNormalizer.TruncateAfterFirstGo(normalized);
             var withoutConstraints = SqlScriptNormalizer.StripInlineConstraints(firstBatch);
             definitionScript = SqlScriptNormalizer.NormalizeForComparison(withoutConstraints);
+        }
+        else if (type == SqlObjectType.Trigger)
+        {
+            var normalized = SqlScriptNormalizer.Normalize(script);
+            var firstBatch = SqlScriptNormalizer.TruncateAfterFirstGo(normalized);
+            definitionScript = SqlScriptNormalizer.NormalizeForComparison(firstBatch);
         }
         else
         {

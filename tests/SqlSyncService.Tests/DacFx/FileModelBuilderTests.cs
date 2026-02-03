@@ -154,15 +154,15 @@ END";
 
     [Fact]
     public async Task BuildCacheAsync_For_Table_Strips_Inline_Constraints_From_Content()
-	    {
-	        // Arrange
-	        var root = Path.Combine(Path.GetTempPath(), "table_inline_constraints_" + Guid.NewGuid().ToString("N"));
-	        Directory.CreateDirectory(root);
-	
-	        try
-	        {
-	            var sqlPath = Path.Combine(root, "SampleSchema.MaterialLog.sql");
-	            var script = @"CREATE TABLE [SampleSchema].[MaterialLog] (
+    {
+        // Arrange
+        var root = Path.Combine(Path.GetTempPath(), "table_inline_constraints_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            var sqlPath = Path.Combine(root, "SampleSchema.MaterialLog.sql");
+            var script = @"CREATE TABLE [SampleSchema].[MaterialLog] (
 			    [Id]                          INT              IDENTITY (1, 1) NOT NULL,
 			    [ColumnA]                     INT              NOT NULL,
 			    [ColumnB]                     INT              NULL,
@@ -183,13 +183,13 @@ END";
             var cache = await builder.BuildCacheAsync(Guid.NewGuid(), folder);
             var tableEntry = cache.FileEntries.Values.Single(e => e.ObjectType == SqlObjectType.Table);
 
-	        // Assert - constraints are stripped from the stored content
-	        Assert.DoesNotContain("CONSTRAINT", tableEntry.Content, StringComparison.OrdinalIgnoreCase);
-	        Assert.DoesNotContain("PRIMARY KEY", tableEntry.Content, StringComparison.OrdinalIgnoreCase);
-	        Assert.DoesNotContain("FOREIGN KEY", tableEntry.Content, StringComparison.OrdinalIgnoreCase);
-	        Assert.Contains("[Id]", tableEntry.Content, StringComparison.OrdinalIgnoreCase);
-	        Assert.Contains("[ColumnA]", tableEntry.Content, StringComparison.OrdinalIgnoreCase);
-	    }
+            // Assert - constraints are stripped from the stored content
+            Assert.DoesNotContain("CONSTRAINT", tableEntry.Content, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("PRIMARY KEY", tableEntry.Content, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("FOREIGN KEY", tableEntry.Content, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("[Id]", tableEntry.Content, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("[ColumnA]", tableEntry.Content, StringComparison.OrdinalIgnoreCase);
+        }
         finally
         {
             if (Directory.Exists(root))
@@ -243,6 +243,78 @@ END";
             Assert.Contains("GENERATED ALWAYS AS ROW START", entry.Content, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("GENERATED ALWAYS AS ROW END", entry.Content, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("PERIOD FOR SYSTEM_TIME", entry.Content, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task BuildCacheAsync_For_Temporal_Table_Normalizes_Trailing_Comma_Before_Period_For_System_Time()
+    {
+        // Arrange
+        var root = Path.Combine(Path.GetTempPath(), "temporal_trailing_comma_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            var sqlPath = Path.Combine(root, "SampleSchema.OrderQueue.sql");
+            var script = @"CREATE TABLE [SampleSchema].[OrderQueue] (
+	    [Id]                      INT                                         IDENTITY (1, 1) NOT NULL,
+	    [ScheduledTime]           DATETIME2 (7)                               NOT NULL,
+	    [OrderNumber]             NVARCHAR (50)                               NOT NULL,
+	    [ReferenceNumber]         NVARCHAR (50)                               NOT NULL,
+	    [Priority]                INT                                         NOT NULL,
+	    [Category]                NVARCHAR (50)                               NOT NULL,
+	    [Status]                  NVARCHAR (50)                               NOT NULL,
+	    [ParentOrderId]           INT                                         NULL,
+	    [SortOrder]               INT                                         NULL,
+	    [ItemCode]                NVARCHAR (50)                               NULL,
+	    [CreatedDate]             DATETIME2 (7)                               NOT NULL,
+	    [ValidFrom]               DATETIME2 (7) GENERATED ALWAYS AS ROW START NOT NULL,
+	    [ValidTo]                 DATETIME2 (7) GENERATED ALWAYS AS ROW END   NOT NULL,
+	    [DetailId]                INT                                         NULL,
+	    [TrackingNumber]          NVARCHAR (50)                               NULL,
+	    [VendorNumber]            NVARCHAR (50)                               NULL,
+	    [RequiredQty]             NUMERIC (18, 3)                             NULL,
+	    [ProcessedQty]            NUMERIC (18, 3)                             NULL,
+	    [GroupName]               NVARCHAR (50)                               NULL,
+	    [ItemStatusID]            INT                                         NULL,
+	    [OrderTypeID]             INT                                         NULL,
+	    [ProcessedDate]           DATETIME                                    NULL,
+	    [VerifiedQty]             INT                                         NULL,
+	    [ProcessedBy]             INT                                         NULL,
+	    [OrderID]                 INT                                         NULL,
+	    PERIOD FOR SYSTEM_TIME ([ValidFrom], [ValidTo])
+);";
+
+            await File.WriteAllTextAsync(sqlPath, script);
+
+            var builder = new FileModelBuilder();
+            var folder = new ProjectFolder { RootPath = root };
+
+            // Act
+            var cache = await builder.BuildCacheAsync(Guid.NewGuid(), folder);
+            var entry = cache.FileEntries["SampleSchema.OrderQueue.sql"];
+
+            // Assert - trailing comma on the last column before PERIOD FOR SYSTEM_TIME
+            // should be normalized away in the stored content.
+            Assert.Equal(SqlObjectType.Table, entry.ObjectType);
+
+            var databaseScript = script.Replace(
+                "[OrderID]                 INT                                         NULL,",
+                "[OrderID]                 INT                                         NULL");
+
+            var dbNormalized = SqlScriptNormalizer.Normalize(databaseScript);
+            var dbFirstBatch = SqlScriptNormalizer.TruncateAfterFirstGo(dbNormalized);
+            var dbStripped = SqlScriptNormalizer.StripInlineConstraints(dbFirstBatch);
+            var expectedContent = SqlScriptNormalizer.NormalizeForComparison(dbStripped);
+
+            Assert.Equal(expectedContent, entry.Content);
         }
         finally
         {
@@ -419,4 +491,456 @@ CREATE VIEW dbo.RealView AS SELECT 42 AS Value;";
             }
         }
     }
+
+    [Fact]
+    public async Task BuildCacheAsync_Preserves_Dots_In_Table_Names_From_Create_Statement()
+    {
+        // Arrange - table name contains a dot (e.g., Audit.DataConversions)
+        // The dot is part of the table name, not a schema separator.
+        var root = Path.Combine(Path.GetTempPath(), "dotted_table_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            var sqlPath = Path.Combine(root, "Audit.DataConversions.sql");
+            var script = @"CREATE TABLE [SampleSchema].[Audit.DataConversions] (
+    [Id]                      INT            NOT NULL,
+    [InputData]               NVARCHAR (MAX) NOT NULL,
+    [OutputData]              NVARCHAR (MAX) NULL,
+    [ProcessedTime]           DATETIME2 (7)  NULL,
+    [ProcessStatusId]         INT            NOT NULL,
+    [ConfigId]                INT            NOT NULL,
+    [ValidFrom]               DATETIME2 (7)  NOT NULL,
+    [ValidTo]                 DATETIME2 (7)  NOT NULL,
+    [CreatedBy]               INT            NOT NULL,
+    [CreatedDate]             DATETIME2 (7)  NOT NULL,
+    [ModifiedById]            INT            NULL,
+    [ModifiedDate]            DATETIME2 (7)  NULL,
+    [OutputTableId]           INT            NULL,
+    [SourceName]              NVARCHAR (50)  NOT NULL
+);";
+
+            await File.WriteAllTextAsync(sqlPath, script);
+
+            var builder = new FileModelBuilder();
+            var folder = new ProjectFolder { RootPath = root };
+
+            // Act
+            var cache = await builder.BuildCacheAsync(Guid.NewGuid(), folder);
+            var entry = Assert.Single(cache.FileEntries).Value;
+
+            // Assert - The full table name including the internal dot should be preserved
+            Assert.Equal(SqlObjectType.Table, entry.ObjectType);
+            Assert.Equal("Audit.DataConversions", entry.ObjectName);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void TryExtractTableName_Parses_Bracketed_Table_Name_With_Dots()
+    {
+        // Arrange
+        var sql = "CREATE TABLE [SampleSchema].[Audit.DataConfig] ([Id] INT NOT NULL);";
+
+        // Act
+        var tableName = FileModelBuilder.TryExtractTableName(sql);
+
+        // Assert - should return only the table name, not schema, preserving internal dot
+        Assert.Equal("Audit.DataConfig", tableName);
+    }
+
+    [Fact]
+    public void TryExtractTableName_Parses_Simple_Bracketed_Table_Name()
+    {
+        // Arrange
+        var sql = "CREATE TABLE [dbo].[Users] ([Id] INT NOT NULL);";
+
+        // Act
+        var tableName = FileModelBuilder.TryExtractTableName(sql);
+
+        // Assert
+        Assert.Equal("Users", tableName);
+    }
+
+    [Fact]
+    public void TryExtractTableName_Parses_Unbracketed_Table_Name()
+    {
+        // Arrange
+        var sql = "CREATE TABLE dbo.Customers (Id INT NOT NULL);";
+
+        // Act
+        var tableName = FileModelBuilder.TryExtractTableName(sql);
+
+        // Assert
+        Assert.Equal("Customers", tableName);
+    }
+
+    [Fact]
+    public void TryExtractTableName_Returns_Empty_When_No_Create_Table()
+    {
+        // Arrange
+        var sql = "CREATE VIEW dbo.MyView AS SELECT 1;";
+
+        // Act
+        var tableName = FileModelBuilder.TryExtractTableName(sql);
+
+        // Assert
+        Assert.Equal(string.Empty, tableName);
+    }
+
+    #region TryExtractViewName Tests
+
+    [Fact]
+    public void TryExtractViewName_Parses_Bracketed_View_Name()
+    {
+        // Arrange
+        var sql = "CREATE VIEW [dbo].[vw_BMW_FileImports] AS SELECT 1;";
+
+        // Act
+        var viewName = FileModelBuilder.TryExtractViewName(sql);
+
+        // Assert
+        Assert.Equal("vw_BMW_FileImports", viewName);
+    }
+
+    [Fact]
+    public void TryExtractViewName_Parses_Create_Or_Alter_View()
+    {
+        // Arrange
+        var sql = "CREATE OR ALTER VIEW [dbo].[vw_MyView] AS SELECT 1;";
+
+        // Act
+        var viewName = FileModelBuilder.TryExtractViewName(sql);
+
+        // Assert
+        Assert.Equal("vw_MyView", viewName);
+    }
+
+    [Fact]
+    public void TryExtractViewName_Parses_Alter_View()
+    {
+        // Arrange
+        var sql = "ALTER VIEW [dbo].[vw_Modified] AS SELECT 2;";
+
+        // Act
+        var viewName = FileModelBuilder.TryExtractViewName(sql);
+
+        // Assert
+        Assert.Equal("vw_Modified", viewName);
+    }
+
+    [Fact]
+    public void TryExtractViewName_Returns_Empty_When_No_Create_View()
+    {
+        // Arrange
+        var sql = "CREATE TABLE dbo.MyTable (Id INT);";
+
+        // Act
+        var viewName = FileModelBuilder.TryExtractViewName(sql);
+
+        // Assert
+        Assert.Equal(string.Empty, viewName);
+    }
+
+    #endregion
+
+    #region TryExtractProcedureName Tests
+
+    [Fact]
+    public void TryExtractProcedureName_Parses_Bracketed_Procedure_Name()
+    {
+        // Arrange
+        var sql = "CREATE PROCEDURE [dbo].[sp_GetUsers] AS SELECT 1;";
+
+        // Act
+        var procName = FileModelBuilder.TryExtractProcedureName(sql);
+
+        // Assert
+        Assert.Equal("sp_GetUsers", procName);
+    }
+
+    [Fact]
+    public void TryExtractProcedureName_Parses_Create_Proc_Short_Form()
+    {
+        // Arrange
+        var sql = "CREATE PROC [dbo].[sp_Short] AS SELECT 1;";
+
+        // Act
+        var procName = FileModelBuilder.TryExtractProcedureName(sql);
+
+        // Assert
+        Assert.Equal("sp_Short", procName);
+    }
+
+    [Fact]
+    public void TryExtractProcedureName_Parses_Create_Or_Alter_Procedure()
+    {
+        // Arrange
+        var sql = "CREATE OR ALTER PROCEDURE [dbo].[sp_Updated] AS SELECT 1;";
+
+        // Act
+        var procName = FileModelBuilder.TryExtractProcedureName(sql);
+
+        // Assert
+        Assert.Equal("sp_Updated", procName);
+    }
+
+    [Fact]
+    public void TryExtractProcedureName_Returns_Empty_When_No_Create_Procedure()
+    {
+        // Arrange
+        var sql = "CREATE VIEW dbo.MyView AS SELECT 1;";
+
+        // Act
+        var procName = FileModelBuilder.TryExtractProcedureName(sql);
+
+        // Assert
+        Assert.Equal(string.Empty, procName);
+    }
+
+    [Fact]
+    public void TryExtractProcedureName_Handles_Extra_Spaces_Between_Create_And_Procedure()
+    {
+        // Arrange - This is the actual format seen in production SQL files
+        var sql = "CREATE   procedure [SampleSchema].[SyncDataItems]\nas\nSELECT 1;";
+
+        // Act
+        var procName = FileModelBuilder.TryExtractProcedureName(sql);
+
+        // Assert
+        Assert.Equal("SyncDataItems", procName);
+    }
+
+    #endregion
+
+    #region TryExtractFunctionName Tests
+
+    [Fact]
+    public void TryExtractFunctionName_Parses_Bracketed_Function_Name()
+    {
+        // Arrange
+        var sql = "CREATE FUNCTION [dbo].[fn_GetValue]() RETURNS INT AS BEGIN RETURN 1; END;";
+
+        // Act
+        var funcName = FileModelBuilder.TryExtractFunctionName(sql);
+
+        // Assert
+        Assert.Equal("fn_GetValue", funcName);
+    }
+
+    [Fact]
+    public void TryExtractFunctionName_Parses_Create_Or_Alter_Function()
+    {
+        // Arrange
+        var sql = "CREATE OR ALTER FUNCTION [dbo].[fn_Updated]() RETURNS INT AS BEGIN RETURN 1; END;";
+
+        // Act
+        var funcName = FileModelBuilder.TryExtractFunctionName(sql);
+
+        // Assert
+        Assert.Equal("fn_Updated", funcName);
+    }
+
+    [Fact]
+    public void TryExtractFunctionName_Returns_Empty_When_No_Create_Function()
+    {
+        // Arrange
+        var sql = "CREATE TABLE dbo.MyTable (Id INT);";
+
+        // Act
+        var funcName = FileModelBuilder.TryExtractFunctionName(sql);
+
+        // Assert
+        Assert.Equal(string.Empty, funcName);
+    }
+
+    #endregion
+
+    #region TryExtractTriggerName Tests
+
+    [Fact]
+    public void TryExtractTriggerName_Parses_Bracketed_Trigger_Name()
+    {
+        // Arrange
+        var sql = "CREATE TRIGGER [dbo].[tr_AfterInsert] ON [dbo].[Users] AFTER INSERT AS BEGIN END;";
+
+        // Act
+        var triggerName = FileModelBuilder.TryExtractTriggerName(sql);
+
+        // Assert
+        Assert.Equal("tr_AfterInsert", triggerName);
+    }
+
+    [Fact]
+    public void TryExtractTriggerName_Parses_Create_Or_Alter_Trigger()
+    {
+        // Arrange
+        var sql = "CREATE OR ALTER TRIGGER [dbo].[tr_Updated] ON [dbo].[Users] AFTER UPDATE AS BEGIN END;";
+
+        // Act
+        var triggerName = FileModelBuilder.TryExtractTriggerName(sql);
+
+        // Assert
+        Assert.Equal("tr_Updated", triggerName);
+    }
+
+    [Fact]
+    public void TryExtractTriggerName_Returns_Empty_When_No_Create_Trigger()
+    {
+        // Arrange
+        var sql = "CREATE TABLE dbo.MyTable (Id INT);";
+
+        // Act
+        var triggerName = FileModelBuilder.TryExtractTriggerName(sql);
+
+        // Assert
+        Assert.Equal(string.Empty, triggerName);
+    }
+
+    #endregion
+
+    #region InferObjectType Function Type Tests
+
+    [Fact]
+    public void InferObjectType_Classifies_Inline_Table_Valued_Function_As_TableValuedFunction()
+    {
+        // Arrange - This is an inline table-valued function with RETURNS TABLE
+        var sql = @"CREATE FUNCTION [dbo].[fn_GetDashboardInfo]
+(
+    @locationID INT,
+    @dashboardID INT
+)
+RETURNS TABLE
+AS
+RETURN
+(
+    SELECT Id, Name FROM Dashboard WHERE DashboardID = @dashboardID
+)";
+
+        // Act
+        var objectType = FileModelBuilder.InferObjectType(sql);
+
+        // Assert - DacFx classifies this as TableValuedFunction, so we should too
+        Assert.Equal(SqlObjectType.TableValuedFunction, objectType);
+    }
+
+    [Fact]
+    public void InferObjectType_Classifies_Multi_Statement_Table_Valued_Function_As_TableValuedFunction()
+    {
+        // Arrange - This is a multi-statement table-valued function with RETURNS @table TABLE
+        var sql = @"CREATE FUNCTION [dbo].[fn_GetEmployees](@DeptId INT)
+RETURNS @result TABLE
+(
+    EmployeeId INT,
+    EmployeeName NVARCHAR(100)
+)
+AS
+BEGIN
+    INSERT INTO @result SELECT Id, Name FROM Employees WHERE DeptId = @DeptId;
+    RETURN;
+END";
+
+        // Act
+        var objectType = FileModelBuilder.InferObjectType(sql);
+
+        // Assert
+        Assert.Equal(SqlObjectType.TableValuedFunction, objectType);
+    }
+
+    [Fact]
+    public void InferObjectType_Classifies_Scalar_Function_As_ScalarFunction()
+    {
+        // Arrange - This is a scalar function with RETURNS INT
+        var sql = @"CREATE FUNCTION [dbo].[fn_GetValue]()
+RETURNS INT
+AS
+BEGIN
+    RETURN 1;
+END";
+
+        // Act
+        var objectType = FileModelBuilder.InferObjectType(sql);
+
+        // Assert
+        Assert.Equal(SqlObjectType.ScalarFunction, objectType);
+    }
+
+    [Fact]
+    public void InferObjectType_Classifies_Scalar_Function_With_Varchar_Return_As_ScalarFunction()
+    {
+        // Arrange - This is a scalar function with RETURNS VARCHAR
+        var sql = @"CREATE FUNCTION [dbo].[fn_FormatName](@FirstName VARCHAR(50), @LastName VARCHAR(50))
+RETURNS VARCHAR(100)
+AS
+BEGIN
+    RETURN @FirstName + ' ' + @LastName;
+END";
+
+        // Act
+        var objectType = FileModelBuilder.InferObjectType(sql);
+
+        // Assert
+        Assert.Equal(SqlObjectType.ScalarFunction, objectType);
+    }
+
+    [Fact]
+    public void InferObjectType_Handles_Inline_TVF_With_CTE()
+    {
+        // Arrange - Real-world example with CTE and RETURNS TABLE
+        var sql = @"CREATE FUNCTION [dbo].[GenerateIncrementingRecords](@RecordCount INT)
+RETURNS TABLE
+AS
+RETURN
+WITH CTE AS
+(
+    SELECT 1 as RecordID
+    UNION ALL
+    SELECT RecordID + 1
+    FROM CTE
+    WHERE RecordID < @RecordCount
+)
+SELECT *
+FROM CTE";
+
+        // Act
+        var objectType = FileModelBuilder.InferObjectType(sql);
+
+        // Assert
+        Assert.Equal(SqlObjectType.TableValuedFunction, objectType);
+    }
+
+    [Fact]
+    public void InferObjectType_Handles_Function_With_Comments()
+    {
+        // Arrange - Function with comments before CREATE FUNCTION
+        var sql = @"-- =============================================
+-- Author:		<Author,,Name>
+-- Create date: <Create Date,,>
+-- Description:	<Description,,>
+-- =============================================
+CREATE FUNCTION [dbo].[fn_GetDashboardInfo]
+(
+    @locationID INT
+)
+RETURNS TABLE
+AS
+RETURN
+(
+    SELECT Id, Name FROM Dashboard
+)";
+
+        // Act
+        var objectType = FileModelBuilder.InferObjectType(sql);
+
+        // Assert
+        Assert.Equal(SqlObjectType.TableValuedFunction, objectType);
+    }
+
+    #endregion
 }

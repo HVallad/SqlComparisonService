@@ -24,14 +24,21 @@ internal static class SqlScriptNormalizer
 
         var lines = normalized.Split('\n');
 
+        // Trim leading blank/whitespace-only lines
+        var start = 0;
+        while (start < lines.Length && string.IsNullOrWhiteSpace(lines[start]))
+        {
+            start++;
+        }
+
         // Trim trailing blank/whitespace-only lines
         var end = lines.Length - 1;
-        while (end >= 0 && string.IsNullOrWhiteSpace(lines[end]))
+        while (end >= start && string.IsNullOrWhiteSpace(lines[end]))
         {
             end--;
         }
 
-        if (end < 0)
+        if (end < start)
         {
             return string.Empty;
         }
@@ -40,21 +47,21 @@ internal static class SqlScriptNormalizer
         if (IsGoLine(lines[end]))
         {
             end--; // drop GO line
-            while (end >= 0 && string.IsNullOrWhiteSpace(lines[end]))
+            while (end >= start && string.IsNullOrWhiteSpace(lines[end]))
             {
                 end--;
             }
         }
 
-        if (end < 0)
+        if (end < start)
         {
             return string.Empty;
         }
 
         var builder = new StringBuilder();
-        for (var i = 0; i <= end; i++)
+        for (var i = start; i <= end; i++)
         {
-            if (i > 0)
+            if (i > start)
             {
                 builder.Append('\n');
             }
@@ -137,7 +144,13 @@ internal static class SqlScriptNormalizer
             lines[i] = builder.ToString();
         }
 
-        return string.Join("\n", lines);
+        var result = string.Join("\n", lines);
+        // Apply the same temporal trailing-comma normalization used in
+        // StripInlineConstraints, so that callers which only use
+        // NormalizeForComparison (or which pass through additional
+        // transformations) still get consistent handling of
+        // "final column + PERIOD FOR SYSTEM_TIME" patterns.
+        return NormalizeTrailingCommaBeforePeriodForSystemTime(result);
     }
 
     /// <summary>
@@ -263,20 +276,43 @@ internal static class SqlScriptNormalizer
         var hasNonConstraintBetweenConstraintsAndClose = false;
         for (var i = openLine + 1; i < closeLine; i++)
         {
-            if (firstConstraintLine == -1 && IsConstraintLine(lines[i]))
+            var line = lines[i];
+
+            if (string.IsNullOrWhiteSpace(line))
             {
-                firstConstraintLine = i;
+                continue;
             }
-            else if (firstConstraintLine == -1 && !string.IsNullOrWhiteSpace(lines[i]))
+
+            if (IsConstraintLine(line))
             {
-                lastColumnLine = i;
+                if (firstConstraintLine == -1)
+                {
+                    firstConstraintLine = i;
+                }
+
+                continue;
             }
-            else if (firstConstraintLine != -1
-                     && i > firstConstraintLine
-                     && i < closeLine
-                     && !string.IsNullOrWhiteSpace(lines[i])
-                     && !IsConstraintLine(lines[i]))
+
+            var isPeriodLine = IsPeriodForSystemTimeLine(line);
+
+            if (firstConstraintLine == -1)
             {
+                // Before any table-level constraints: track the last actual
+                // column definition line. Temporal PERIOD FOR SYSTEM_TIME
+                // lines are not treated as columns so that we do not
+                // accidentally strip the ", [ValidTo])" portion when
+                // normalizing trailing commas.
+                if (!isPeriodLine)
+                {
+                    lastColumnLine = i;
+                }
+            }
+            else
+            {
+                // After the first table-level constraint, any non-constraint
+                // line (including PERIOD FOR SYSTEM_TIME) counts as a
+                // non-constraint between the constraints and the closing
+                // parenthesis.
                 hasNonConstraintBetweenConstraintsAndClose = true;
             }
         }
@@ -294,10 +330,19 @@ internal static class SqlScriptNormalizer
         if (lastColumnLine >= 0 && (firstConstraintLine == -1 || !hasNonConstraintBetweenConstraintsAndClose))
         {
             var line = lines[lastColumnLine];
-            var commaIndex = line.LastIndexOf(',');
-            if (commaIndex >= 0)
+            var trimmed = line.TrimEnd();
+
+            // Only remove a trailing comma when it is actually the last
+            // non-whitespace character on the line. This avoids chopping
+            // commas that belong to type parameter lists such as
+            // NUMERIC(18, 2).
+            if (trimmed.EndsWith(",", StringComparison.Ordinal))
             {
-                lines[lastColumnLine] = line.Substring(0, commaIndex);
+                var commaIndex = line.LastIndexOf(',');
+                if (commaIndex >= 0)
+                {
+                    lines[lastColumnLine] = line.Substring(0, commaIndex);
+                }
             }
         }
 
@@ -322,7 +367,14 @@ internal static class SqlScriptNormalizer
             builder.Append(lines[i]);
         }
 
-        return builder.ToString();
+        // As a final normalization step for temporal tables, ensure that a
+        // trailing comma on the last column immediately before a
+        // PERIOD FOR SYSTEM_TIME clause is removed. This handles cases
+        // where file-side scripts include a comma after the final column
+        // while the DacFx-produced database script does not, so that such
+        // scripts compare equal.
+        var result = builder.ToString();
+        return NormalizeTrailingCommaBeforePeriodForSystemTime(result);
     }
 
     /// <summary>
@@ -442,6 +494,57 @@ internal static class SqlScriptNormalizer
         }
 
         return false;
+    }
+
+    private static bool IsPeriodForSystemTimeLine(string? line)
+    {
+        if (string.IsNullOrWhiteSpace(line))
+        {
+            return false;
+        }
+
+        var trimmed = line.TrimStart();
+        return trimmed.StartsWith("PERIOD FOR SYSTEM_TIME", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizeTrailingCommaBeforePeriodForSystemTime(string script)
+    {
+        if (string.IsNullOrWhiteSpace(script))
+        {
+            return script;
+        }
+
+        var lines = script.Split('\n');
+        for (var i = 0; i < lines.Length; i++)
+        {
+            if (!IsPeriodForSystemTimeLine(lines[i]))
+            {
+                continue;
+            }
+
+            // Walk backwards to find the preceding non-empty line (typically
+            // the last column definition) and remove any trailing comma so
+            // that the column and PERIOD FOR SYSTEM_TIME clause match the
+            // shape of the database script.
+            for (var j = i - 1; j >= 0; j--)
+            {
+                if (string.IsNullOrWhiteSpace(lines[j]))
+                {
+                    continue;
+                }
+
+                var line = lines[j];
+                var commaIndex = line.LastIndexOf(',');
+                if (commaIndex >= 0)
+                {
+                    lines[j] = line.Substring(0, commaIndex);
+                }
+
+                break;
+            }
+        }
+
+        return string.Join("\n", lines);
     }
 
     /// <summary>
