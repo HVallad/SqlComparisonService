@@ -1,6 +1,7 @@
 using LiteDB;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
+using SqlSyncService.ChangeDetection;
 using SqlSyncService.Configuration;
 using SqlSyncService.Contracts;
 using SqlSyncService.Middleware;
@@ -8,6 +9,7 @@ using SqlSyncService.Persistence;
 using SqlSyncService.Realtime;
 using SqlSyncService.Services;
 using SqlSyncService.DacFx;
+using SqlSyncService.Workers;
 using System.IO;
 using System.Linq;
 
@@ -54,7 +56,9 @@ builder.Services.AddSingleton<ILiteDatabase>(sp =>
         Directory.CreateDirectory(directory);
     }
 
-    return new LiteDatabase(databasePath);
+    // Use shared mode to allow multiple processes/threads to access the database
+    var connectionString = $"Filename={databasePath};Connection=Shared";
+    return new LiteDatabase(connectionString);
 });
 
 builder.Services.AddSingleton<LiteDbContext>();
@@ -106,6 +110,18 @@ builder.Services.AddScoped<IDatabaseModelBuilder, DatabaseModelBuilder>();
 builder.Services.AddScoped<IFileModelBuilder, FileModelBuilder>();
 builder.Services.AddScoped<ISchemaComparer, SchemaComparer>();
 builder.Services.AddScoped<IComparisonOrchestrator, ComparisonOrchestrator>();
+
+// Change detection components
+builder.Services.AddSingleton<IChangeDebouncer, ChangeDebouncer>();
+builder.Services.AddScoped<IChangeProcessor, ChangeProcessor>();
+
+// Background workers
+builder.Services.AddHostedService<ChangeDetectionCoordinator>();
+builder.Services.AddHostedService<HealthCheckWorker>();
+builder.Services.AddHostedService<CacheCleanupWorker>();
+builder.Services.AddHostedService<FileWatchingWorker>();
+builder.Services.AddHostedService<DatabasePollingWorker>();
+builder.Services.AddHostedService<ReconciliationWorker>();
 
 // Swagger/OpenAPI
 builder.Services.AddEndpointsApiExplorer();

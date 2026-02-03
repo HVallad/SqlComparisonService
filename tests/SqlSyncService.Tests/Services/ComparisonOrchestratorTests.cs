@@ -293,6 +293,33 @@ public class ComparisonOrchestratorTests
             Snapshots.RemoveAll(s => s.SubscriptionId == subscriptionId);
             return Task.CompletedTask;
         }
+
+        public Task<int> DeleteOlderThanAsync(DateTime cutoffDate, CancellationToken cancellationToken = default)
+        {
+            var before = Snapshots.Count;
+            Snapshots.RemoveAll(s => s.CapturedAt < cutoffDate);
+            return Task.FromResult(before - Snapshots.Count);
+        }
+
+        public Task<int> DeleteExcessForSubscriptionAsync(Guid subscriptionId, int maxCount, CancellationToken cancellationToken = default)
+        {
+            var forSubscription = Snapshots
+                .Where(s => s.SubscriptionId == subscriptionId)
+                .OrderByDescending(s => s.CapturedAt)
+                .ToList();
+
+            if (forSubscription.Count <= maxCount)
+            {
+                return Task.FromResult(0);
+            }
+
+            var toRemove = forSubscription.Skip(maxCount).ToList();
+            foreach (var item in toRemove)
+            {
+                Snapshots.Remove(item);
+            }
+            return Task.FromResult(toRemove.Count);
+        }
     }
 
     private sealed class InMemoryComparisonHistoryRepository : IComparisonHistoryRepository
@@ -328,6 +355,13 @@ public class ComparisonOrchestratorTests
             Results.RemoveAll(r => r.SubscriptionId == subscriptionId);
             var removed = before - Results.Count;
             return Task.FromResult(removed);
+        }
+
+        public Task<int> DeleteOlderThanAsync(DateTime cutoffDate, CancellationToken cancellationToken = default)
+        {
+            var before = Results.Count;
+            Results.RemoveAll(r => r.ComparedAt < cutoffDate);
+            return Task.FromResult(before - Results.Count);
         }
     }
 

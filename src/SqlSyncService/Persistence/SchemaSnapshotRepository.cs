@@ -59,5 +59,38 @@ public class SchemaSnapshotRepository : ISchemaSnapshotRepository
         _context.SchemaSnapshots.DeleteMany(s => s.SubscriptionId == subscriptionId);
         return Task.CompletedTask;
     }
-}
 
+    public Task<int> DeleteOlderThanAsync(DateTime cutoffDate, CancellationToken cancellationToken = default)
+    {
+        var deleted = _context.SchemaSnapshots.DeleteMany(s => s.CapturedAt < cutoffDate);
+        return Task.FromResult(deleted);
+    }
+
+    public Task<int> DeleteExcessForSubscriptionAsync(Guid subscriptionId, int maxCount, CancellationToken cancellationToken = default)
+    {
+        // Get all snapshots for the subscription ordered by date (newest first)
+        var snapshots = _context.SchemaSnapshots
+            .Find(s => s.SubscriptionId == subscriptionId)
+            .OrderByDescending(s => s.CapturedAt)
+            .ToList();
+
+        if (snapshots.Count <= maxCount)
+        {
+            return Task.FromResult(0);
+        }
+
+        // Delete excess snapshots (keeping the most recent ones)
+        var toDelete = snapshots.Skip(maxCount).Select(s => s.Id).ToList();
+        var deletedCount = 0;
+
+        foreach (var id in toDelete)
+        {
+            if (_context.SchemaSnapshots.Delete(id))
+            {
+                deletedCount++;
+            }
+        }
+
+        return Task.FromResult(deletedCount);
+    }
+}

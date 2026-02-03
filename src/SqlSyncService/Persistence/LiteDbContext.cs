@@ -21,6 +21,15 @@ public class LiteDbContext
     public ILiteCollection<ComparisonResult> ComparisonHistory => _database.GetCollection<ComparisonResult>("comparison_history");
     public ILiteCollection<DetectedChange> PendingChanges => _database.GetCollection<DetectedChange>("pending_changes");
 
+    /// <summary>
+    /// Rebuilds the database file, reclaiming unused space.
+    /// This is a blocking operation and should be called during low-activity periods.
+    /// </summary>
+    public long Compact()
+    {
+        return _database.Rebuild();
+    }
+
     private void ConfigureCollections()
     {
         // Subscriptions

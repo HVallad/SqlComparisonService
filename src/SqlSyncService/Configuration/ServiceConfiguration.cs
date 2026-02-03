@@ -15,6 +15,9 @@ public class ServiceConfiguration
 
     [Required]
     public LoggingSettings Logging { get; set; } = new();
+
+    [Required]
+    public WorkerSettings Workers { get; set; } = new();
 }
 
 public class ServerSettings
@@ -41,6 +44,9 @@ public class MonitoringSettings
     [Required]
     public TimeSpan FullReconciliationInterval { get; set; } = TimeSpan.FromMinutes(5);
 
+    [Required]
+    public TimeSpan HealthCheckInterval { get; set; } = TimeSpan.FromSeconds(60);
+
     [Range(1, 32)]
     public int MaxConcurrentComparisons { get; set; } = 2;
 }
@@ -55,6 +61,12 @@ public class CacheSettings
 
     [Range(1, 100)]
     public int MaxCachedSnapshots { get; set; } = 10;
+
+    [Required]
+    public TimeSpan ComparisonHistoryRetention { get; set; } = TimeSpan.FromDays(30);
+
+    [Required]
+    public TimeSpan PendingChangeRetention { get; set; } = TimeSpan.FromDays(1);
 }
 
 public class LoggingSettings
@@ -69,3 +81,36 @@ public class LoggingSettings
     public string? FilePath { get; set; }
 }
 
+public class WorkerSettings
+{
+    /// <summary>
+    /// Enable database polling for schema changes (queries sys.objects.modify_date).
+    /// </summary>
+    public bool EnableDatabasePolling { get; set; } = true;
+
+    /// <summary>
+    /// Enable file system watching for project file changes.
+    /// </summary>
+    public bool EnableFileWatching { get; set; } = true;
+
+    /// <summary>
+    /// Enable periodic full reconciliation comparisons.
+    /// </summary>
+    public bool EnableReconciliation { get; set; } = true;
+
+    /// <summary>
+    /// Enable cache cleanup worker for retention enforcement.
+    /// </summary>
+    public bool EnableCacheCleanup { get; set; } = true;
+
+    /// <summary>
+    /// Enable health check worker for connectivity monitoring.
+    /// </summary>
+    public bool EnableHealthChecks { get; set; } = true;
+
+    /// <summary>
+    /// Interval for cache cleanup worker (default: 1 hour).
+    /// </summary>
+    [Required]
+    public TimeSpan CacheCleanupInterval { get; set; } = TimeSpan.FromHours(1);
+}

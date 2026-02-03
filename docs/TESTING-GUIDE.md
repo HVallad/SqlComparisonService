@@ -1,6 +1,6 @@
-# SQL Sync Service – Local Testing Guide
+﻿# SQL Sync Service – Local Testing Guide
 
-This guide shows how to exercise the **existing HTTP APIs** against your own SQL Server database and SQL project folder. At this point in the implementation, the comparison engine (DacFx + orchestrator) is wired and available via manual comparison endpoints for subscriptions, including per-object difference APIs. Background monitoring is not yet exposed. You can verify:
+This guide shows how to exercise the **existing HTTP APIs** against your own SQL Server database and SQL project folder. The comparison engine (DacFx + orchestrator) is wired and available via manual comparison endpoints for subscriptions, including per-object difference APIs. **Background monitoring via Milestone 8 workers is now active**, providing automated change detection and health monitoring. You can verify:
 
 - The service starts correctly.
 - Your database connection works.
@@ -618,24 +618,58 @@ curl "http://localhost:5050/api/comparisons/{comparisonId}/differences/{diffId}"
 - **404 Not Found** – comparison does not exist (`error.code = "NOT_FOUND"`).
 - **404 Not Found** – difference ID is not part of the comparison (`error.code = "NOT_FOUND"`).
 
-## 10. What’s next: background monitoring
+## 10. Background Workers (Milestone 8)
 
-With Milestone 7 you can:
+Milestone 8 introduces **five background workers** that provide automated change detection and health monitoring.
 
-1. Register a subscription pointing at your DB and folder (via `/api/subscriptions`).
-2. Trigger a comparison manually for that subscription (`POST /api/subscriptions/{id}/compare`).
-3. Browse comparison history and inspect individual comparison summaries.
-4. Drill into per-object differences for any comparison using the endpoints in section 9.
+### 10.1 Background Worker Overview
 
-Future milestones will add:
+| Worker | Default Interval | Purpose |
+|--------|------------------|---------|
+| **HealthCheckWorker** | 60 seconds | Monitors database connectivity and folder accessibility |
+| **CacheCleanupWorker** | 1 hour | Enforces retention policies for snapshots and history |
+| **FileWatchingWorker** | Real-time + 30s sync | Monitors SQL project folders for file changes |
+| **DatabasePollingWorker** | 30 seconds | Polls `sys.objects.modify_date` to detect schema changes |
+| **ReconciliationWorker** | 5 minutes | Runs periodic full comparisons to catch missed changes |
 
-- Background monitoring that uses subscription options (e.g. `autoCompare`, `compareOnFileChange`, `compareOnDatabaseChange`) to run comparisons automatically.
+### 10.2 Worker Configuration
 
-Until then, you can already:
+Workers are configured in `appsettings.json` under `Service.Workers`. You can disable any worker by setting its `Enable*` flag to `false`.
 
-- Validate **connectivity** with `/api/connections/test`.
-- Validate **project visibility and structure** with `/api/folders/validate`.
-- Work with **subscriptions** via `/api/subscriptions` to persist your DB + project configuration and test state transitions (active/paused/delete).
-- Trigger and inspect **on-demand comparisons** with the endpoints in sections 8 and 9.
-- Use the **test suite** to confirm that the comparison engine and persistence behave correctly end-to-end.
+### 10.3 Change Detection Pipeline
 
+1. **FileWatchingWorker** or **DatabasePollingWorker** detects a change
+2. Change is recorded in the **ChangeDebouncer** (default 500ms window)
+3. After the debounce window, a batch is emitted to the **ChangeProcessor**
+4. ChangeProcessor persists changes, emits SignalR events, and triggers comparisons
+
+### 10.4 SignalR Events
+
+| Event | Source |
+|-------|--------|
+| `ChangesDetected` | ChangeProcessor |
+| `DatabaseChanged` | DatabasePollingWorker |
+| `SubscriptionHealthChanged` | HealthCheckWorker |
+
+### 10.5 Subscription Health
+
+Health status values: `Healthy`, `Degraded`, `Unhealthy`, `Unknown`
+
+---
+
+## 11. Testing Background Workers
+
+The test suite includes 28 unit tests for background workers:
+
+- `ChangeDebouncerTests.cs` - Debounce window, batch aggregation
+- `ChangeProcessorTests.cs` - Batch persistence, SignalR notifications
+- `CacheCleanupWorkerTests.cs` - Retention policy enforcement
+- `HealthCheckWorkerTests.cs` - Health status determination
+
+Run all 177 tests with `dotnet test`
+
+---
+
+## 12. Summary
+
+With Milestones 7 and 8, you can register subscriptions, trigger comparisons, browse history, benefit from automatic change detection, and monitor subscription health via SignalR events.

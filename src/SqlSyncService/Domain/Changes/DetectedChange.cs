@@ -9,6 +9,7 @@ public class DetectedChange
     public string ObjectIdentifier { get; set; } = string.Empty;
     public DateTime DetectedAt { get; set; }
     public bool IsProcessed { get; set; }
+    public DateTime? ProcessedAt { get; set; }
 }
 
 public enum ChangeSource

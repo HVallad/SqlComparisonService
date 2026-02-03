@@ -46,5 +46,10 @@ public class ComparisonHistoryRepository : IComparisonHistoryRepository
         var deleted = _context.ComparisonHistory.DeleteMany(r => r.SubscriptionId == subscriptionId);
         return Task.FromResult(deleted);
     }
-}
 
+    public Task<int> DeleteOlderThanAsync(DateTime cutoffDate, CancellationToken cancellationToken = default)
+    {
+        var deleted = _context.ComparisonHistory.DeleteMany(r => r.ComparedAt < cutoffDate);
+        return Task.FromResult(deleted);
+    }
+}

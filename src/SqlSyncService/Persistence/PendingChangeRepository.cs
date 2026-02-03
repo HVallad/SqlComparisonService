@@ -51,5 +51,10 @@ public class PendingChangeRepository : IPendingChangeRepository
         var deleted = _context.PendingChanges.Delete(id);
         return Task.FromResult(deleted);
     }
-}
 
+    public Task<int> DeleteProcessedOlderThanAsync(DateTime cutoffDate, CancellationToken cancellationToken = default)
+    {
+        var deleted = _context.PendingChanges.DeleteMany(c => c.IsProcessed && c.DetectedAt < cutoffDate);
+        return Task.FromResult(deleted);
+    }
+}
