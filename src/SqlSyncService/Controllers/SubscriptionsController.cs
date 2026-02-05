@@ -311,6 +311,82 @@ public sealed class SubscriptionsController : ControllerBase
         return Accepted(response);
     }
 
+    /// <summary>
+    /// Compare a single database object against its file definition.
+    /// </summary>
+    [HttpPost("{id:guid}/compare/object")]
+    public async Task<ActionResult<CompareObjectResponse>> CompareObject(
+        Guid id,
+        [FromBody] CompareObjectRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request == null)
+        {
+            var error = new ErrorDetail
+            {
+                Code = ErrorCodes.ValidationError,
+                Message = "Request body is required.",
+                TraceId = HttpContext.TraceIdentifier,
+                Timestamp = DateTime.UtcNow
+            };
+            return BadRequest(new ErrorResponse { Error = error });
+        }
+
+        if (string.IsNullOrWhiteSpace(request.ObjectName))
+        {
+            var error = new ErrorDetail
+            {
+                Code = ErrorCodes.ValidationError,
+                Message = "ObjectName is required.",
+                Field = "objectName",
+                TraceId = HttpContext.TraceIdentifier,
+                Timestamp = DateTime.UtcNow
+            };
+            return BadRequest(new ErrorResponse { Error = error });
+        }
+
+        try
+        {
+            var result = await _comparisonOrchestrator
+                .CompareObjectAsync(id, request.SchemaName, request.ObjectName, request.ObjectType, cancellationToken)
+                .ConfigureAwait(false);
+
+            var response = new CompareObjectResponse
+            {
+                SubscriptionId = result.SubscriptionId,
+                SchemaName = result.SchemaName,
+                ObjectName = result.ObjectName,
+                ObjectType = result.ObjectType.ToString(),
+                IsSynchronized = result.IsSynchronized,
+                ExistsInDatabase = result.ExistsInDatabase,
+                ExistsInFileSystem = result.ExistsInFileSystem,
+                ComparedAt = result.ComparedAt,
+                Difference = result.Difference != null
+                    ? new SchemaDifferenceDto
+                    {
+                        DifferenceType = result.Difference.DifferenceType.ToString(),
+                        DatabaseDefinition = result.Difference.DatabaseDefinition,
+                        FileDefinition = result.Difference.FileDefinition,
+                        FilePath = result.Difference.FilePath
+                    }
+                    : null
+            };
+
+            return Ok(response);
+        }
+        catch (SubscriptionNotFoundException)
+        {
+            var notFound = new ErrorDetail
+            {
+                Code = ErrorCodes.NotFound,
+                Message = $"Subscription '{id}' was not found.",
+                TraceId = HttpContext.TraceIdentifier,
+                Timestamp = DateTime.UtcNow
+            };
+            return NotFound(new ErrorResponse { Error = notFound });
+        }
+    }
+
     [HttpGet("{id:guid}/comparisons")]
     public async Task<ActionResult<GetSubscriptionComparisonsResponse>> GetComparisons(
         Guid id,

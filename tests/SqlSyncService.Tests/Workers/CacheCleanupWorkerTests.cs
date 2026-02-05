@@ -278,6 +278,15 @@ public class CacheCleanupWorkerTests
             foreach (var item in toRemove) Snapshots.Remove(item);
             return Task.FromResult(toRemove.Count);
         }
+
+        public Task UpdateObjectsAsync(Guid snapshotId, IEnumerable<SchemaObjectSummary> updatedObjects, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+
+        public Task RemoveObjectAsync(Guid snapshotId, string schemaName, string objectName, SqlObjectType objectType, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+
+        public Task UpdateAsync(SchemaSnapshot snapshot, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
     }
 
     private sealed class InMemoryComparisonHistoryRepository : IComparisonHistoryRepository

@@ -12,6 +12,7 @@ public class FileModelCache
 public class FileObjectEntry
 {
     public string FilePath { get; set; } = string.Empty;
+    public string SchemaName { get; set; } = string.Empty;
     public string ObjectName { get; set; } = string.Empty;
     public SqlObjectType ObjectType { get; set; }
     public string ContentHash { get; set; } = string.Empty;

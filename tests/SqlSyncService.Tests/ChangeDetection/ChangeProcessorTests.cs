@@ -311,6 +311,46 @@ public class ChangeProcessorTests
                 Status = ComparisonStatus.Synchronized
             });
         }
+
+        public Task<SingleObjectComparisonResult> CompareObjectAsync(
+            Guid subscriptionId,
+            string schemaName,
+            string objectName,
+            SqlObjectType objectType,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new SingleObjectComparisonResult
+            {
+                SubscriptionId = subscriptionId,
+                SchemaName = schemaName,
+                ObjectName = objectName,
+                ObjectType = objectType,
+                IsSynchronized = true,
+                ExistsInDatabase = true,
+                ExistsInFileSystem = true,
+                ComparedAt = DateTime.UtcNow
+            });
+        }
+
+        public Task<ComparisonResult> CompareObjectsAsync(
+            Guid subscriptionId,
+            IEnumerable<SqlSyncService.Domain.Changes.ObjectIdentifier> changedObjects,
+            CancellationToken cancellationToken = default)
+        {
+            if (ThrowComparisonInProgress)
+            {
+                throw new ComparisonInProgressException();
+            }
+
+            ComparisonTriggered = true;
+            LastSubscriptionId = subscriptionId;
+            return Task.FromResult(new ComparisonResult
+            {
+                Id = Guid.NewGuid(),
+                SubscriptionId = subscriptionId,
+                Status = ComparisonStatus.Synchronized
+            });
+        }
     }
 
     private sealed class MockHubContext : IHubContext<SyncHub>

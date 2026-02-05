@@ -5,6 +5,7 @@ using Microsoft.Extensions.Options;
 using SqlSyncService.ChangeDetection;
 using SqlSyncService.Configuration;
 using SqlSyncService.Domain.Changes;
+using SqlSyncService.Domain.Comparisons;
 using SqlSyncService.Domain.Subscriptions;
 using SqlSyncService.Persistence;
 using SqlSyncService.Realtime;
@@ -13,7 +14,7 @@ namespace SqlSyncService.Workers;
 
 /// <summary>
 /// Background worker that polls database metadata to detect schema changes.
-/// Queries sys.objects.modify_date to identify when objects have been modified.
+/// Queries sys.objects.modify_date to identify when specific objects have been modified.
 /// </summary>
 public sealed class DatabasePollingWorker : BackgroundService
 {
@@ -23,14 +24,30 @@ public sealed class DatabasePollingWorker : BackgroundService
     private readonly TimeSpan _pollInterval;
     private readonly bool _enabled;
 
-    // Track last known modify_date per subscription
-    private readonly ConcurrentDictionary<Guid, DateTime> _lastKnownModifyDates = new();
+    // Track last known modify_date per object: key = "subscriptionId:schema.objectName:objectType"
+    private readonly ConcurrentDictionary<string, DateTime> _lastKnownObjectModifyDates = new();
 
-    // SQL query to get the latest modify date from database objects
+    // SQL query to get individual object modify dates
     private const string PollQuery = @"
-        SELECT MAX(modify_date) AS LatestModifyDate
+        SELECT
+            SCHEMA_NAME(schema_id) AS SchemaName,
+            name AS ObjectName,
+            type AS ObjectType,
+            modify_date AS ModifyDate
         FROM sys.objects
         WHERE type IN ('U', 'V', 'P', 'FN', 'IF', 'TF', 'TR')";
+
+    // Map SQL Server type codes to SqlObjectType
+    private static readonly Dictionary<string, SqlObjectType> SqlTypeMap = new(StringComparer.OrdinalIgnoreCase)
+    {
+        { "U", SqlObjectType.Table },
+        { "V", SqlObjectType.View },
+        { "P", SqlObjectType.StoredProcedure },
+        { "FN", SqlObjectType.ScalarFunction },
+        { "IF", SqlObjectType.InlineTableValuedFunction },
+        { "TF", SqlObjectType.TableValuedFunction },
+        { "TR", SqlObjectType.Trigger }
+    };
 
     public DatabasePollingWorker(
         IServiceProvider serviceProvider,
@@ -113,10 +130,10 @@ public sealed class DatabasePollingWorker : BackgroundService
         IHubContext<SyncHub> hubContext,
         CancellationToken cancellationToken)
     {
-        var latestModifyDate = await GetLatestModifyDateAsync(
+        var objects = await GetDatabaseObjectsAsync(
             subscription.Database.ConnectionString, cancellationToken);
 
-        if (latestModifyDate == null)
+        if (objects.Count == 0)
         {
             _logger.LogDebug(
                 "No objects found in database for subscription {SubscriptionId}",
@@ -124,49 +141,112 @@ public sealed class DatabasePollingWorker : BackgroundService
             return;
         }
 
-        var lastKnown = _lastKnownModifyDates.GetOrAdd(subscription.Id, DateTime.MinValue);
+        var changedObjects = new List<DatabaseObjectInfo>();
+        var isFirstPoll = !HasExistingState(subscription.Id);
 
-        if (latestModifyDate > lastKnown)
+        foreach (var obj in objects)
         {
-            // Database has changed since last poll
-            _logger.LogInformation(
-                "Database change detected for subscription {SubscriptionId}: {LastKnown} -> {Latest}",
-                subscription.Id, lastKnown, latestModifyDate);
+            var key = BuildObjectKey(subscription.Id, obj);
+            var lastKnown = _lastKnownObjectModifyDates.GetOrAdd(key, DateTime.MinValue);
 
-            // Update tracking
-            _lastKnownModifyDates[subscription.Id] = latestModifyDate.Value;
-
-            // Only record changes after initial seeding (not on first poll)
-            if (lastKnown > DateTime.MinValue)
+            if (obj.ModifyDate > lastKnown)
             {
-                // Record as a generic "database" change - we don't know which specific object
+                // Update tracking
+                _lastKnownObjectModifyDates[key] = obj.ModifyDate;
+
+                // Only record changes after initial seeding (not on first poll)
+                if (lastKnown > DateTime.MinValue)
+                {
+                    changedObjects.Add(obj);
+                }
+            }
+        }
+
+        if (changedObjects.Count > 0)
+        {
+            _logger.LogInformation(
+                "Database changes detected for subscription {SubscriptionId}: {ObjectCount} object(s) modified",
+                subscription.Id, changedObjects.Count);
+
+            foreach (var obj in changedObjects)
+            {
+                var objectIdentifier = $"{obj.SchemaName}.{obj.ObjectName}";
+
+                _logger.LogDebug(
+                    "Object changed: {ObjectType} {ObjectIdentifier} at {ModifyDate}",
+                    obj.ObjectType, objectIdentifier, obj.ModifyDate);
+
                 _debouncer.RecordChange(
                     subscription.Id,
-                    "DATABASE_SCHEMA",
+                    objectIdentifier,
                     ChangeSource.Database,
-                    ChangeType.Modified);
-
-                // Emit SignalR event
-                await hubContext.Clients.All.SendAsync(
-                    "DatabaseChanged",
-                    new { SubscriptionId = subscription.Id, LatestModifyDate = latestModifyDate },
-                    cancellationToken);
+                    ChangeType.Modified,
+                    obj.ObjectType);
             }
+
+            // Emit SignalR event with details about changed objects
+            await hubContext.Clients.All.SendAsync(
+                "DatabaseChanged",
+                new
+                {
+                    SubscriptionId = subscription.Id,
+                    ChangedObjects = changedObjects.Select(o => new
+                    {
+                        o.SchemaName,
+                        o.ObjectName,
+                        ObjectType = o.ObjectType.ToString(),
+                        o.ModifyDate
+                    }).ToList()
+                },
+                cancellationToken);
+        }
+        else if (isFirstPoll)
+        {
+            _logger.LogDebug(
+                "Initial state seeded for subscription {SubscriptionId}: {ObjectCount} objects tracked",
+                subscription.Id, objects.Count);
         }
     }
 
-    private static async Task<DateTime?> GetLatestModifyDateAsync(
+    private bool HasExistingState(Guid subscriptionId)
+    {
+        var prefix = $"{subscriptionId}:";
+        return _lastKnownObjectModifyDates.Keys.Any(k => k.StartsWith(prefix, StringComparison.Ordinal));
+    }
+
+    private static string BuildObjectKey(Guid subscriptionId, DatabaseObjectInfo obj)
+    {
+        return $"{subscriptionId}:{obj.SchemaName}.{obj.ObjectName}:{obj.ObjectType}";
+    }
+
+    private static async Task<List<DatabaseObjectInfo>> GetDatabaseObjectsAsync(
         string connectionString,
         CancellationToken cancellationToken)
     {
+        var results = new List<DatabaseObjectInfo>();
+
         await using var connection = new SqlConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
 
         await using var command = new SqlCommand(PollQuery, connection);
         command.CommandTimeout = 10; // 10-second timeout for polling query
 
-        var result = await command.ExecuteScalarAsync(cancellationToken);
-        return result == DBNull.Value ? null : (DateTime?)result;
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var schemaName = reader.IsDBNull(0) ? "dbo" : reader.GetString(0);
+            var objectName = reader.GetString(1);
+            var sqlType = reader.GetString(2).Trim();
+            var modifyDate = reader.GetDateTime(3);
+
+            if (SqlTypeMap.TryGetValue(sqlType, out var objectType))
+            {
+                results.Add(new DatabaseObjectInfo(schemaName, objectName, objectType, modifyDate));
+            }
+        }
+
+        return results;
     }
 
     /// <summary>
@@ -174,7 +254,35 @@ public sealed class DatabasePollingWorker : BackgroundService
     /// </summary>
     public void ClearSubscriptionState(Guid subscriptionId)
     {
-        _lastKnownModifyDates.TryRemove(subscriptionId, out _);
+        var prefix = $"{subscriptionId}:";
+        var keysToRemove = _lastKnownObjectModifyDates.Keys
+            .Where(k => k.StartsWith(prefix, StringComparison.Ordinal))
+            .ToList();
+
+        foreach (var key in keysToRemove)
+        {
+            _lastKnownObjectModifyDates.TryRemove(key, out _);
+        }
     }
+
+    /// <summary>
+    /// Gets the list of currently tracked objects for a subscription (for testing/diagnostics).
+    /// </summary>
+    public IReadOnlyDictionary<string, DateTime> GetTrackedObjects(Guid subscriptionId)
+    {
+        var prefix = $"{subscriptionId}:";
+        return _lastKnownObjectModifyDates
+            .Where(kvp => kvp.Key.StartsWith(prefix, StringComparison.Ordinal))
+            .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+    }
+
+    /// <summary>
+    /// Represents a database object with its modify date.
+    /// </summary>
+    private record DatabaseObjectInfo(
+        string SchemaName,
+        string ObjectName,
+        SqlObjectType ObjectType,
+        DateTime ModifyDate);
 }
 

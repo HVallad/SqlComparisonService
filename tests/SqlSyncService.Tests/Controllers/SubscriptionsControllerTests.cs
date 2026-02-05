@@ -1017,6 +1017,159 @@ public class SubscriptionsControllerTests : IClassFixture<WebApplicationFactory<
         Assert.Equal(ErrorCodes.NotFound, error!.Error.Code);
     }
 
+    #region Single-Object Comparison Tests
+
+    [Fact]
+    public async Task CompareObject_Returns_Ok_When_Object_Is_Synchronized()
+    {
+        // Arrange - create factory with stub orchestrator
+        var factory = _factory.WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureServices(services =>
+            {
+                services.AddSingleton<ILiteDatabase>(_ => new LiteDatabase(new MemoryStream()));
+                var stubOrchestrator = new StubComparisonOrchestrator(new ComparisonResult
+                {
+                    Id = Guid.NewGuid(),
+                    Status = ComparisonStatus.Synchronized,
+                    Summary = new ComparisonSummary()
+                });
+                services.AddSingleton<IComparisonOrchestrator>(stubOrchestrator);
+            });
+        });
+
+        using var client = factory.CreateClient();
+
+        // Create a subscription first
+        var createRequest = new CreateSubscriptionRequest
+        {
+            Name = "Test",
+            Database = new CreateSubscriptionDatabaseConfig
+            {
+                Server = "localhost",
+                Database = "TestDb",
+                AuthType = "windows"
+            },
+            Project = new CreateSubscriptionProjectConfig
+            {
+                Path = "C:\\Temp\\TestProject",
+                Structure = "by-type"
+            },
+            Options = new CreateSubscriptionOptionsConfig()
+        };
+        var createResponse = await client.PostAsJsonAsync("/api/subscriptions", createRequest);
+        createResponse.EnsureSuccessStatusCode();
+        var createdSub = await createResponse.Content.ReadFromJsonAsync<SubscriptionDetailResponse>();
+        Assert.NotNull(createdSub);
+
+        // Act
+        var compareRequest = new CompareObjectRequest
+        {
+            SchemaName = "dbo",
+            ObjectName = "TestProc",
+            ObjectType = SqlObjectType.StoredProcedure
+        };
+        var response = await client.PostAsJsonAsync(
+            $"/api/subscriptions/{createdSub!.Id}/compare/object", compareRequest);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<CompareObjectResponse>();
+        Assert.NotNull(body);
+        Assert.Equal(createdSub.Id, body!.SubscriptionId);
+        Assert.Equal("dbo", body.SchemaName);
+        Assert.Equal("TestProc", body.ObjectName);
+    }
+
+    [Fact]
+    public async Task CompareObject_Returns_NotFound_For_Invalid_Subscription()
+    {
+        // Arrange - this test doesn't need a stub orchestrator since it should fail before reaching it
+        var factory = _factory.WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureServices(services =>
+            {
+                services.AddSingleton<ILiteDatabase>(_ => new LiteDatabase(new MemoryStream()));
+                var stubOrchestrator = new StubComparisonOrchestrator(new SubscriptionNotFoundException(Guid.NewGuid()));
+                services.AddSingleton<IComparisonOrchestrator>(stubOrchestrator);
+            });
+        });
+
+        using var client = factory.CreateClient();
+
+        // Act
+        var compareRequest = new CompareObjectRequest
+        {
+            SchemaName = "dbo",
+            ObjectName = "TestProc",
+            ObjectType = SqlObjectType.StoredProcedure
+        };
+        var response = await client.PostAsJsonAsync(
+            $"/api/subscriptions/{Guid.NewGuid()}/compare/object", compareRequest);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task CompareObject_Returns_BadRequest_When_ObjectName_Missing()
+    {
+        // Arrange
+        var factory = _factory.WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureServices(services =>
+            {
+                services.AddSingleton<ILiteDatabase>(_ => new LiteDatabase(new MemoryStream()));
+                var stubOrchestrator = new StubComparisonOrchestrator(new ComparisonResult
+                {
+                    Id = Guid.NewGuid(),
+                    Status = ComparisonStatus.Synchronized,
+                    Summary = new ComparisonSummary()
+                });
+                services.AddSingleton<IComparisonOrchestrator>(stubOrchestrator);
+            });
+        });
+
+        using var client = factory.CreateClient();
+
+        // Create a subscription first
+        var createRequest = new CreateSubscriptionRequest
+        {
+            Name = "Test",
+            Database = new CreateSubscriptionDatabaseConfig
+            {
+                Server = "localhost",
+                Database = "TestDb",
+                AuthType = "windows"
+            },
+            Project = new CreateSubscriptionProjectConfig
+            {
+                Path = "C:\\Temp\\TestProject",
+                Structure = "by-type"
+            },
+            Options = new CreateSubscriptionOptionsConfig()
+        };
+        var createResponse = await client.PostAsJsonAsync("/api/subscriptions", createRequest);
+        createResponse.EnsureSuccessStatusCode();
+        var createdSub = await createResponse.Content.ReadFromJsonAsync<SubscriptionDetailResponse>();
+        Assert.NotNull(createdSub);
+
+        // Act - missing objectName
+        var compareRequest = new CompareObjectRequest
+        {
+            SchemaName = "dbo",
+            ObjectName = "",
+            ObjectType = SqlObjectType.StoredProcedure
+        };
+        var response = await client.PostAsJsonAsync(
+            $"/api/subscriptions/{createdSub!.Id}/compare/object", compareRequest);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    #endregion
+
     private sealed class StubComparisonOrchestrator : IComparisonOrchestrator
     {
         private readonly ComparisonResult _result;
@@ -1041,6 +1194,45 @@ public class SubscriptionsControllerTests : IClassFixture<WebApplicationFactory<
         }
 
         public Task<ComparisonResult> RunComparisonAsync(Guid subscriptionId, bool fullComparison, CancellationToken cancellationToken = default)
+        {
+            if (_exceptionToThrow is not null)
+            {
+                throw _exceptionToThrow;
+            }
+
+            _result.SubscriptionId = subscriptionId;
+            return Task.FromResult(_result);
+        }
+
+        public Task<SingleObjectComparisonResult> CompareObjectAsync(
+            Guid subscriptionId,
+            string schemaName,
+            string objectName,
+            SqlObjectType objectType,
+            CancellationToken cancellationToken = default)
+        {
+            if (_exceptionToThrow is not null)
+            {
+                throw _exceptionToThrow;
+            }
+
+            return Task.FromResult(new SingleObjectComparisonResult
+            {
+                SubscriptionId = subscriptionId,
+                SchemaName = schemaName,
+                ObjectName = objectName,
+                ObjectType = objectType,
+                IsSynchronized = true,
+                ExistsInDatabase = true,
+                ExistsInFileSystem = true,
+                ComparedAt = DateTime.UtcNow
+            });
+        }
+
+        public Task<ComparisonResult> CompareObjectsAsync(
+            Guid subscriptionId,
+            IEnumerable<SqlSyncService.Domain.Changes.ObjectIdentifier> changedObjects,
+            CancellationToken cancellationToken = default)
         {
             if (_exceptionToThrow is not null)
             {

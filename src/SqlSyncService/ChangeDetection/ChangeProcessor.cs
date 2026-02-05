@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.SignalR;
 using SqlSyncService.Domain.Changes;
+using SqlSyncService.Domain.Comparisons;
 using SqlSyncService.Persistence;
 using SqlSyncService.Realtime;
 using SqlSyncService.Services;
@@ -90,23 +91,12 @@ public sealed class ChangeProcessor : IChangeProcessor
             return;
         }
 
-        // 5. Trigger comparison
-        // Use fullComparison when database changes are detected to ensure we fetch
-        // a fresh snapshot from the database. File changes can use cached snapshot
-        // since the database hasn't changed.
-        var hasDbChanges = batch.Changes.Any(c => c.Source == ChangeSource.Database);
-
+        // 5. Trigger comparison(s)
+        // For database changes with known object types, use single-object comparison for efficiency.
+        // For file changes or unknown object types, use full comparison.
         try
         {
-            _logger.LogInformation(
-                "Triggering {ComparisonType} comparison for subscription {SubscriptionId} due to detected changes",
-                hasDbChanges ? "full" : "incremental",
-                batch.SubscriptionId);
-
-            await _comparisonOrchestrator.RunComparisonAsync(
-                batch.SubscriptionId,
-                fullComparison: hasDbChanges,
-                cancellationToken);
+            await TriggerComparisonsAsync(batch, cancellationToken);
 
             // Mark changes as processed
             foreach (var change in batch.Changes)
@@ -122,6 +112,54 @@ public sealed class ChangeProcessor : IChangeProcessor
             _logger.LogInformation(
                 "Comparison already in progress for subscription {SubscriptionId}, changes will be picked up by reconciliation",
                 batch.SubscriptionId);
+        }
+    }
+
+    private async Task TriggerComparisonsAsync(PendingChangeBatch batch, CancellationToken cancellationToken)
+    {
+        // Separate changes into those with known object types (can use batched incremental comparison)
+        // and those without (require full comparison)
+        var dbChangesWithType = batch.Changes
+            .Where(c => c.Source == ChangeSource.Database && c.ObjectType.HasValue)
+            .ToList();
+
+        var otherChanges = batch.Changes
+            .Where(c => c.Source == ChangeSource.FileSystem || !c.ObjectType.HasValue)
+            .ToList();
+
+        // Process database changes with known types using batched incremental comparison
+        if (dbChangesWithType.Count > 0)
+        {
+            // Convert to ObjectIdentifier for batched query
+            var objectIdentifiers = dbChangesWithType
+                .Select(c => ObjectIdentifier.Parse(c.ObjectIdentifier, c.ObjectType!.Value))
+                .ToList();
+
+            _logger.LogInformation(
+                "Triggering batched comparison for {Count} changed object(s) in subscription {SubscriptionId}",
+                objectIdentifiers.Count, batch.SubscriptionId);
+
+            await _comparisonOrchestrator.CompareObjectsAsync(
+                batch.SubscriptionId,
+                objectIdentifiers,
+                cancellationToken);
+        }
+
+        // Process file changes or changes without known types using full comparison
+        if (otherChanges.Count > 0)
+        {
+            var hasDbChanges = otherChanges.Any(c => c.Source == ChangeSource.Database);
+
+            _logger.LogInformation(
+                "Triggering {ComparisonType} comparison for subscription {SubscriptionId} due to {Count} change(s)",
+                hasDbChanges ? "full" : "incremental",
+                batch.SubscriptionId,
+                otherChanges.Count);
+
+            await _comparisonOrchestrator.RunComparisonAsync(
+                batch.SubscriptionId,
+                fullComparison: hasDbChanges,
+                cancellationToken);
         }
     }
 

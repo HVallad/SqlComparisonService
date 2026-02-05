@@ -8,10 +8,22 @@ namespace SqlSyncService.Tests.DacFx;
 public class DatabaseModelBuilderTests
 {
     [Fact]
-    public async Task BuildSnapshotAsync_Uses_Overrides_For_Extraction_And_ObjectPopulation()
+    public async Task BuildSnapshotAsync_Uses_SchemaReader_For_AllObjects()
     {
         // Arrange
-        var builder = new DatabaseModelBuilder();
+        var mockReader = new MockDatabaseSchemaReader();
+        mockReader.ObjectsToReturn = new List<SchemaObjectSummary>
+        {
+            new SchemaObjectSummary
+            {
+                SchemaName = "dbo",
+                ObjectName = "Users",
+                ObjectType = SqlObjectType.Table,
+                DefinitionHash = "ABC123"
+            }
+        };
+
+        var builder = new DatabaseModelBuilder(mockReader);
         var subscriptionId = Guid.NewGuid();
         var connection = new DatabaseConnection
         {
@@ -19,28 +31,11 @@ public class DatabaseModelBuilderTests
             Database = "TestDb"
         };
 
-        var extractCalls = 0;
-        var populateCalls = 0;
-        var dacpacBytes = new byte[] { 1, 2, 3 };
-
         try
         {
-            DatabaseModelBuilder.ExtractDacpacOverride = (conn, ct) =>
-            {
-                extractCalls++;
-                Assert.Same(connection, conn);
-                return Task.FromResult(dacpacBytes);
-            };
-
-            DatabaseModelBuilder.PopulateObjectsOverride = snapshot =>
-            {
-                populateCalls++;
-                snapshot.Objects.Add(new SchemaObjectSummary
-                {
-                    SchemaName = "dbo",
-                    ObjectName = "Users"
-                });
-            };
+            // Disable login loading for this test
+            DatabaseModelBuilder.LoadLoginsOverride = (conn, ct) =>
+                Task.FromResult<IReadOnlyCollection<SchemaObjectSummary>>(Array.Empty<SchemaObjectSummary>());
 
             // Act
             var snapshot = await builder.BuildSnapshotAsync(subscriptionId, connection);
@@ -48,18 +43,59 @@ public class DatabaseModelBuilderTests
             // Assert
             Assert.Equal(subscriptionId, snapshot.SubscriptionId);
             Assert.Equal("TestDb", snapshot.DatabaseVersion);
-            Assert.Equal(dacpacBytes, snapshot.DacpacBytes);
             Assert.False(string.IsNullOrWhiteSpace(snapshot.Hash));
-            Assert.Equal(1, extractCalls);
-            Assert.Equal(1, populateCalls);
+            Assert.True(mockReader.GetAllObjectsCalled);
             Assert.Single(snapshot.Objects);
             Assert.Equal("dbo", snapshot.Objects[0].SchemaName);
             Assert.Equal("Users", snapshot.Objects[0].ObjectName);
         }
         finally
         {
-            DatabaseModelBuilder.ExtractDacpacOverride = null;
-            DatabaseModelBuilder.PopulateObjectsOverride = null;
+            DatabaseModelBuilder.LoadLoginsOverride = null;
+        }
+    }
+
+    [Fact]
+    public async Task BuildSnapshotAsync_Uses_SchemaReader_For_FilteredObjects()
+    {
+        // Arrange
+        var mockReader = new MockDatabaseSchemaReader();
+        mockReader.ObjectsToReturn = new List<SchemaObjectSummary>
+        {
+            new SchemaObjectSummary
+            {
+                SchemaName = "dbo",
+                ObjectName = "GetUsers",
+                ObjectType = SqlObjectType.StoredProcedure,
+                DefinitionHash = "DEF456"
+            }
+        };
+
+        var builder = new DatabaseModelBuilder(mockReader);
+        var subscriptionId = Guid.NewGuid();
+        var connection = new DatabaseConnection
+        {
+            Server = "localhost",
+            Database = "TestDb"
+        };
+
+        try
+        {
+            // Disable login loading for this test
+            DatabaseModelBuilder.LoadLoginsOverride = (conn, ct) =>
+                Task.FromResult<IReadOnlyCollection<SchemaObjectSummary>>(Array.Empty<SchemaObjectSummary>());
+
+            // Act
+            var snapshot = await builder.BuildSnapshotAsync(subscriptionId, connection, SqlObjectType.StoredProcedure);
+
+            // Assert
+            Assert.True(mockReader.GetObjectsByTypeCalled);
+            Assert.Equal(SqlObjectType.StoredProcedure, mockReader.LastFilterType);
+            Assert.Single(snapshot.Objects);
+            Assert.Equal("GetUsers", snapshot.Objects[0].ObjectName);
+        }
+        finally
+        {
             DatabaseModelBuilder.LoadLoginsOverride = null;
         }
     }
@@ -68,7 +104,19 @@ public class DatabaseModelBuilderTests
     public async Task BuildSnapshotAsync_Includes_Logins_When_Override_Provided()
     {
         // Arrange
-        var builder = new DatabaseModelBuilder();
+        var mockReader = new MockDatabaseSchemaReader();
+        mockReader.ObjectsToReturn = new List<SchemaObjectSummary>
+        {
+            new SchemaObjectSummary
+            {
+                SchemaName = "dbo",
+                ObjectName = "Users",
+                ObjectType = SqlObjectType.Table,
+                DefinitionHash = "TABLE123"
+            }
+        };
+
+        var builder = new DatabaseModelBuilder(mockReader);
         var subscriptionId = Guid.NewGuid();
         var connection = new DatabaseConnection
         {
@@ -76,37 +124,24 @@ public class DatabaseModelBuilderTests
             Database = "TestDb"
         };
 
-        var dacpacBytes = new byte[] { 9, 9, 9 };
-
         try
         {
-            DatabaseModelBuilder.ExtractDacpacOverride = (conn, ct) => Task.FromResult(dacpacBytes);
-            DatabaseModelBuilder.PopulateObjectsOverride = snapshot =>
-            {
-                snapshot.Objects.Add(new SchemaObjectSummary
-                {
-                    SchemaName = "dbo",
-                    ObjectName = "Users",
-                    ObjectType = SqlObjectType.Table
-                });
-            };
-
             DatabaseModelBuilder.LoadLoginsOverride = (conn, ct) =>
             {
                 IReadOnlyCollection<SchemaObjectSummary> logins = new[]
                 {
-                        new SchemaObjectSummary
-                        {
-                            SchemaName = string.Empty,
-                            ObjectName = "LoginA",
-                            ObjectType = SqlObjectType.Login
-                        },
-                        new SchemaObjectSummary
-                        {
-                            SchemaName = string.Empty,
-                            ObjectName = "LoginB",
-                            ObjectType = SqlObjectType.Login
-                        }
+                    new SchemaObjectSummary
+                    {
+                        SchemaName = string.Empty,
+                        ObjectName = "LoginA",
+                        ObjectType = SqlObjectType.Login
+                    },
+                    new SchemaObjectSummary
+                    {
+                        SchemaName = string.Empty,
+                        ObjectName = "LoginB",
+                        ObjectType = SqlObjectType.Login
+                    }
                 };
 
                 return Task.FromResult(logins);
@@ -118,7 +153,6 @@ public class DatabaseModelBuilderTests
             // Assert
             Assert.Equal(subscriptionId, snapshot.SubscriptionId);
             Assert.Equal("TestDb", snapshot.DatabaseVersion);
-            Assert.Equal(dacpacBytes, snapshot.DacpacBytes);
             Assert.False(string.IsNullOrWhiteSpace(snapshot.Hash));
             Assert.Equal(3, snapshot.Objects.Count);
             Assert.Contains(snapshot.Objects, o => o.ObjectType == SqlObjectType.Table && o.ObjectName == "Users");
@@ -127,66 +161,116 @@ public class DatabaseModelBuilderTests
         }
         finally
         {
-            DatabaseModelBuilder.ExtractDacpacOverride = null;
-            DatabaseModelBuilder.PopulateObjectsOverride = null;
             DatabaseModelBuilder.LoadLoginsOverride = null;
         }
     }
 
     [Fact]
-    public void SplitNameParts_Uses_Last_Two_Parts_For_Schema_And_Name()
+    public async Task BuildSnapshotAsync_Skips_Logins_When_Filtering_For_Other_Types()
     {
         // Arrange
-        var parts = new[] { "MyDatabase", "dbo", "Users" };
+        var mockReader = new MockDatabaseSchemaReader();
+        mockReader.ObjectsToReturn = new List<SchemaObjectSummary>
+        {
+            new SchemaObjectSummary
+            {
+                SchemaName = "dbo",
+                ObjectName = "Users",
+                ObjectType = SqlObjectType.Table,
+                DefinitionHash = "TABLE123"
+            }
+        };
 
-        // Act
-        var (schema, name) = DatabaseModelBuilder.SplitNameParts(parts);
+        var builder = new DatabaseModelBuilder(mockReader);
+        var subscriptionId = Guid.NewGuid();
+        var connection = new DatabaseConnection
+        {
+            Server = "localhost",
+            Database = "TestDb"
+        };
 
-        // Assert
-        Assert.Equal("dbo", schema);
-        Assert.Equal("Users", name);
+        var loginOverrideCalled = false;
+
+        try
+        {
+            DatabaseModelBuilder.LoadLoginsOverride = (conn, ct) =>
+            {
+                loginOverrideCalled = true;
+                return Task.FromResult<IReadOnlyCollection<SchemaObjectSummary>>(Array.Empty<SchemaObjectSummary>());
+            };
+
+            // Act - filter by Table, should skip login loading
+            var snapshot = await builder.BuildSnapshotAsync(subscriptionId, connection, SqlObjectType.Table);
+
+            // Assert
+            Assert.False(loginOverrideCalled, "Login loading should be skipped when filtering for non-Login types");
+            Assert.Single(snapshot.Objects);
+        }
+        finally
+        {
+            DatabaseModelBuilder.LoadLoginsOverride = null;
+        }
     }
 
-    [Fact]
-    public void SplitNameParts_Assumes_Dbo_For_Single_Part_Name()
+    /// <summary>
+    /// Mock implementation of IDatabaseSchemaReader for testing.
+    /// </summary>
+    private class MockDatabaseSchemaReader : IDatabaseSchemaReader
     {
-        // Arrange
-        var parts = new[] { "Users" };
+        public List<SchemaObjectSummary> ObjectsToReturn { get; set; } = new();
+        public bool GetAllObjectsCalled { get; private set; }
+        public bool GetObjectsByTypeCalled { get; private set; }
+        public bool GetObjectCalled { get; private set; }
+        public SqlObjectType? LastFilterType { get; private set; }
 
-        // Act
-        var (schema, name) = DatabaseModelBuilder.SplitNameParts(parts);
+        public Task<IReadOnlyList<SchemaObjectSummary>> GetAllObjectsAsync(
+            DatabaseConnection connection,
+            CancellationToken cancellationToken = default)
+        {
+            GetAllObjectsCalled = true;
+            return Task.FromResult<IReadOnlyList<SchemaObjectSummary>>(ObjectsToReturn);
+        }
 
-        // Assert
-        Assert.Equal("dbo", schema);
-        Assert.Equal("Users", name);
-    }
+        public Task<SchemaObjectSummary?> GetObjectAsync(
+            DatabaseConnection connection,
+            string schemaName,
+            string objectName,
+            SqlObjectType objectType,
+            CancellationToken cancellationToken = default)
+        {
+            GetObjectCalled = true;
+            LastFilterType = objectType;
+            var obj = ObjectsToReturn.FirstOrDefault(o =>
+                o.SchemaName == schemaName &&
+                o.ObjectName == objectName &&
+                o.ObjectType == objectType);
+            return Task.FromResult(obj);
+        }
 
-    [Fact]
-    public void SplitNameParts_Returns_Empty_For_No_Parts()
-    {
-        // Arrange
-        var parts = Array.Empty<string>();
+        public Task<IReadOnlyList<SchemaObjectSummary>> GetObjectsByTypeAsync(
+            DatabaseConnection connection,
+            SqlObjectType objectType,
+            CancellationToken cancellationToken = default)
+        {
+            GetObjectsByTypeCalled = true;
+            LastFilterType = objectType;
+            var filtered = ObjectsToReturn.Where(o => o.ObjectType == objectType).ToList();
+            return Task.FromResult<IReadOnlyList<SchemaObjectSummary>>(filtered);
+        }
 
-        // Act
-        var (schema, name) = DatabaseModelBuilder.SplitNameParts(parts);
-
-        // Assert
-        Assert.Equal(string.Empty, schema);
-        Assert.Equal(string.Empty, name);
-    }
-
-    [Fact]
-    public void SplitIndexNameParts_Uses_Schema_And_Index_Name_From_Parts()
-    {
-        // Arrange: [db].[schema].[table].[index]
-        var parts = new[] { "MyDatabase", "myschema", "MyTable", "IX_MyTable_Col" };
-
-        // Act
-        var (schema, name) = DatabaseModelBuilder.SplitIndexNameParts(parts);
-
-        // Assert
-        Assert.Equal("myschema", schema);
-        Assert.Equal("MyTable.IX_MyTable_Col", name);
+        public Task<IReadOnlyList<SchemaObjectSummary>> GetObjectsAsync(
+            DatabaseConnection connection,
+            IEnumerable<SqlSyncService.Domain.Changes.ObjectIdentifier> objectsToQuery,
+            CancellationToken cancellationToken = default)
+        {
+            // Return matching objects from ObjectsToReturn based on identifiers
+            var identifierList = objectsToQuery.ToList();
+            var results = ObjectsToReturn.Where(o =>
+                identifierList.Any(id =>
+                    string.Equals(id.SchemaName, o.SchemaName, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(id.ObjectName, o.ObjectName, StringComparison.OrdinalIgnoreCase) &&
+                    id.ObjectType == o.ObjectType)).ToList();
+            return Task.FromResult<IReadOnlyList<SchemaObjectSummary>>(results);
+        }
     }
 }
-

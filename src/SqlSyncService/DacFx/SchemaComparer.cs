@@ -26,13 +26,14 @@ public class SchemaComparer : ISchemaComparer
 
         var differences = new List<SchemaDifference>();
 
-        // Group database objects by logical key (type + name). This allows us to
+        // Group database objects by logical key (type + normalized name). This allows us to
         // handle scenarios where the same object name exists in multiple schemas
         // (e.g. dbo.Table and archive.Table) without throwing due to duplicate
-        // dictionary keys.
+        // dictionary keys. The normalization also handles legacy data where the
+        // schema was embedded in ObjectName instead of being in SchemaName.
         var dbObjects = dbSnapshot.Objects
             .Where(o => ShouldInclude(o.ObjectType, options))
-            .GroupBy(o => BuildKey(o.ObjectName, o.ObjectType), StringComparer.OrdinalIgnoreCase)
+            .GroupBy(o => BuildKey(o.SchemaName, o.ObjectName, o.ObjectType), StringComparer.OrdinalIgnoreCase)
             .ToDictionary(
                 g => g.Key,
                 g => g.ToList(),
@@ -43,10 +44,12 @@ public class SchemaComparer : ISchemaComparer
         // schemas for the same object name (e.g. dbo.Table and Staging.Table).
         // Therefore we keep *all* file entries per key and perform pairwise
         // matching against the database group instead of collapsing to a single
-        // file.
+        // file. We now use the schema name extracted from the DDL content to
+        // ensure accurate key generation (e.g., [Translator].[Audit.TranslatorType]
+        // should not be confused with [Translator].[TranslatorType]).
         var fileObjects = fileCache.FileEntries.Values
             .Where(e => ShouldInclude(e.ObjectType, options))
-            .GroupBy(e => BuildKey(e.ObjectName, e.ObjectType), StringComparer.OrdinalIgnoreCase)
+            .GroupBy(e => BuildKey(e.SchemaName, e.ObjectName, e.ObjectType), StringComparer.OrdinalIgnoreCase)
             .ToDictionary(
                 g => g.Key,
                 g => g.ToList(),
@@ -190,8 +193,62 @@ public class SchemaComparer : ISchemaComparer
         return Task.FromResult<IReadOnlyList<SchemaDifference>>(differences);
     }
 
-    private static string BuildKey(string name, SqlObjectType type) =>
-        $"{type}:{name}";
+    private static string BuildKey(string schemaName, string objectName, SqlObjectType type)
+    {
+        // Normalize object name to handle legacy format where schema is embedded in ObjectName
+        // Legacy format: SchemaName = "", ObjectName = "dbo.fn_GetDashboardInfo"
+        // New format: SchemaName = "dbo", ObjectName = "fn_GetDashboardInfo"
+        var normalizedName = NormalizeObjectName(schemaName, objectName, type);
+
+        // For comparison purposes, treat all function subtypes as a single logical
+        // group so that differences in how we classify table-valued functions
+        // (e.g. InlineTableValuedFunction vs TableValuedFunction) do not cause the
+        // same function to appear as a database-only Delete and a file-only Add.
+        //
+        // SQL Server does not allow two functions with the same schema and name
+        // but different return kinds (scalar vs table-valued), so it is safe to
+        // collapse all function types into one key bucket.
+        var keyType = type;
+        if (type == SqlObjectType.ScalarFunction ||
+            type == SqlObjectType.TableValuedFunction ||
+            type == SqlObjectType.InlineTableValuedFunction)
+        {
+            keyType = SqlObjectType.ScalarFunction;
+        }
+
+        return $"{keyType}:{normalizedName}";
+    }
+
+    /// <summary>
+    /// Normalizes an object name by stripping the schema prefix if it's embedded in the name.
+    /// This handles legacy data where SchemaName was empty and the schema was part of ObjectName.
+    /// </summary>
+    private static string NormalizeObjectName(string schemaName, string objectName, SqlObjectType objectType)
+    {
+        // If SchemaName is already populated, ObjectName should be just the name
+        if (!string.IsNullOrWhiteSpace(schemaName))
+        {
+            return objectName;
+        }
+
+        // Index objects use TableName.IndexName format (e.g., "AuditLog.IX_AuditLog")
+        // The dot is NOT a schema prefix, so don't normalize these
+        if (objectType == SqlObjectType.Index)
+        {
+            return objectName;
+        }
+
+        // Legacy format: SchemaName is empty and ObjectName contains schema prefix (e.g., "dbo.fn_GetDashboardInfo")
+        // Extract just the object name part (after the last dot)
+        var lastDotIndex = objectName.LastIndexOf('.');
+        if (lastDotIndex >= 0 && lastDotIndex < objectName.Length - 1)
+        {
+            return objectName.Substring(lastDotIndex + 1);
+        }
+
+        // No schema prefix found, return as-is
+        return objectName;
+    }
 
     private static SchemaObjectSummary ChoosePrimaryForFileMatch(
         IReadOnlyList<SchemaObjectSummary> dbGroup,

@@ -1,6 +1,4 @@
 using Microsoft.Data.SqlClient;
-using Microsoft.SqlServer.Dac;
-using Microsoft.SqlServer.Dac.Model;
 using SqlSyncService.Domain.Caching;
 using SqlSyncService.Domain.Comparisons;
 using SqlSyncService.Domain.Subscriptions;
@@ -12,50 +10,82 @@ namespace SqlSyncService.DacFx;
 public interface IDatabaseModelBuilder
 {
     Task<SchemaSnapshot> BuildSnapshotAsync(Guid subscriptionId, DatabaseConnection connection, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Builds a schema snapshot filtered to only include specific object types.
+    /// This is significantly faster than extracting the full schema when only
+    /// comparing a specific object type.
+    /// </summary>
+    /// <param name="subscriptionId">The subscription identifier.</param>
+    /// <param name="connection">The database connection.</param>
+    /// <param name="filterObjectType">Optional object type to filter extraction. If null, extracts all types.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task<SchemaSnapshot> BuildSnapshotAsync(Guid subscriptionId, DatabaseConnection connection, SqlObjectType? filterObjectType, CancellationToken cancellationToken = default);
 }
 
 public class DatabaseModelBuilder : IDatabaseModelBuilder
 {
-    // Test hooks: these allow unit tests to override the expensive/external
-    // DacFx calls so BuildSnapshotAsync can be exercised without a real
-    // database or dacpac. They are internal and only visible to tests via
-    // InternalsVisibleTo.
-    internal static Func<DatabaseConnection, CancellationToken, Task<byte[]>>? ExtractDacpacOverride { get; set; }
-    internal static Action<SchemaSnapshot>? PopulateObjectsOverride { get; set; }
+    private readonly IDatabaseSchemaReader _schemaReader;
+
+    // Test hook for logins - kept for testing server-level principals
     internal static Func<DatabaseConnection, CancellationToken, Task<IReadOnlyCollection<SchemaObjectSummary>>>? LoadLoginsOverride { get; set; }
 
-    public async Task<SchemaSnapshot> BuildSnapshotAsync(Guid subscriptionId, DatabaseConnection connection, CancellationToken cancellationToken = default)
+    public DatabaseModelBuilder() : this(new DatabaseSchemaReader())
+    {
+    }
+
+    public DatabaseModelBuilder(IDatabaseSchemaReader schemaReader)
+    {
+        _schemaReader = schemaReader ?? throw new ArgumentNullException(nameof(schemaReader));
+    }
+
+    public Task<SchemaSnapshot> BuildSnapshotAsync(Guid subscriptionId, DatabaseConnection connection, CancellationToken cancellationToken = default)
+    {
+        return BuildSnapshotAsync(subscriptionId, connection, filterObjectType: null, cancellationToken);
+    }
+
+    public async Task<SchemaSnapshot> BuildSnapshotAsync(Guid subscriptionId, DatabaseConnection connection, SqlObjectType? filterObjectType, CancellationToken cancellationToken = default)
     {
         if (connection is null) throw new ArgumentNullException(nameof(connection));
         if (subscriptionId == Guid.Empty) throw new ArgumentException("SubscriptionId must not be empty.", nameof(subscriptionId));
 
-        var dacpacBytes = ExtractDacpacOverride is not null
-            ? await ExtractDacpacOverride(connection, cancellationToken).ConfigureAwait(false)
-            : await ExtractDacpacBytesAsync(connection, cancellationToken).ConfigureAwait(false);
-        var hash = ComputeSha256(dacpacBytes);
+        IReadOnlyList<SchemaObjectSummary> objects;
 
-        var snapshot = new SchemaSnapshot
+        if (filterObjectType.HasValue)
         {
-            SubscriptionId = subscriptionId,
-            CapturedAt = DateTime.UtcNow,
-            DatabaseVersion = connection.Database,
-            DacpacBytes = dacpacBytes,
-            Hash = hash
-        };
-
-        if (PopulateObjectsOverride is not null)
-        {
-            PopulateObjectsOverride(snapshot);
+            // Filtered extraction - only get objects of the specified type
+            objects = await _schemaReader.GetObjectsByTypeAsync(connection, filterObjectType.Value, cancellationToken).ConfigureAwait(false);
         }
         else
         {
-            PopulateObjectsFromDacpac(snapshot);
+            // Full extraction
+            objects = await _schemaReader.GetAllObjectsAsync(connection, cancellationToken).ConfigureAwait(false);
         }
 
-        // Logins are server-level principals, not part of the dacpac. We
-        // load them separately using the live connection. Tests can
-        // override this to avoid hitting a real SQL Server instance.
-        if (LoadLoginsOverride is not null)
+        var objectsList = objects.ToList();
+        var hash = ComputeSchemaHash(objectsList);
+
+	        var snapshot = new SchemaSnapshot
+	        {
+	            SubscriptionId = subscriptionId,
+	            CapturedAt = DateTime.UtcNow,
+	            DatabaseVersion = connection.Database,
+	            // New snapshots are created with the current normalization
+	            // pipeline version so that repository logic can avoid
+	            // double-normalizing definitions on load.
+	            NormalizationVersion = SchemaSnapshot.CurrentNormalizationVersion,
+	            Hash = hash,
+	            Objects = objectsList
+	        };
+
+        // Logins are server-level principals. We load them separately.
+        // Skip loading logins if we're filtering for a specific object type
+        // that is not Login.
+        if (filterObjectType.HasValue && filterObjectType.Value != SqlObjectType.Login)
+        {
+            // Skip login loading for filtered extractions
+        }
+        else if (LoadLoginsOverride is not null)
         {
             var loginSummaries = await LoadLoginsOverride(connection, cancellationToken).ConfigureAwait(false);
             if (loginSummaries is not null)
@@ -132,189 +162,19 @@ public class DatabaseModelBuilder : IDatabaseModelBuilder
         return results;
     }
 
-    internal static void PopulateObjectsFromDacpac(SchemaSnapshot snapshot)
+    private static string ComputeSchemaHash(IEnumerable<SchemaObjectSummary> objects)
     {
-        if (snapshot is null) throw new ArgumentNullException(nameof(snapshot));
-        if (snapshot.DacpacBytes is null || snapshot.DacpacBytes.Length == 0)
-        {
-            return;
-        }
+        var combined = string.Join("|", objects
+            .OrderBy(o => o.SchemaName)
+            .ThenBy(o => o.ObjectName)
+            .Select(o => o.DefinitionHash));
 
-        using var ms = new MemoryStream(snapshot.DacpacBytes, writable: false);
-        var loadOptions = new ModelLoadOptions();
-        using var model = TSqlModel.LoadFromDacpac(ms, loadOptions);
-
-        var objects = new List<SchemaObjectSummary>();
-
-        void AddObjects(IEnumerable<TSqlObject> tsqlObjects, SqlObjectType type)
-        {
-            foreach (var obj in tsqlObjects)
-            {
-                var summary = BuildSchemaObjectSummary(obj, type);
-                if (summary is not null)
-                {
-                    objects.Add(summary);
-                }
-            }
-        }
-
-        // Tables, views, procedures, and functions
-        AddObjects(model.GetObjects(DacQueryScopes.UserDefined, ModelSchema.Table), SqlObjectType.Table);
-        AddObjects(model.GetObjects(DacQueryScopes.UserDefined, ModelSchema.View), SqlObjectType.View);
-        AddObjects(model.GetObjects(DacQueryScopes.UserDefined, ModelSchema.Procedure), SqlObjectType.StoredProcedure);
-        AddObjects(model.GetObjects(DacQueryScopes.UserDefined, ModelSchema.ScalarFunction), SqlObjectType.ScalarFunction);
-        AddObjects(model.GetObjects(DacQueryScopes.UserDefined, ModelSchema.TableValuedFunction), SqlObjectType.TableValuedFunction);
-        AddObjects(model.GetObjects(DacQueryScopes.UserDefined, ModelSchema.DmlTrigger), SqlObjectType.Trigger);
-        AddObjects(model.GetObjects(DacQueryScopes.UserDefined, ModelSchema.Index), SqlObjectType.Index);
-
-        // Security principals (database-level only). These rely on DacFx model support
-        // for users and roles; server-level principals such as logins are not represented
-        // in a database dacpac and therefore are not included here.
-        AddObjects(model.GetObjects(DacQueryScopes.UserDefined, ModelSchema.User), SqlObjectType.User);
-        AddObjects(model.GetObjects(DacQueryScopes.UserDefined, ModelSchema.Role), SqlObjectType.Role);
-
-        // Additional types can be added here later (indexes, constraints, types, schemas, synonyms, etc.)
-
-        snapshot.Objects = objects;
-    }
-
-    private static SchemaObjectSummary? BuildSchemaObjectSummary(TSqlObject obj, SqlObjectType type)
-    {
-        if (obj is null)
-        {
-            return null;
-        }
-
-        var (schemaName, objectName) = type == SqlObjectType.Index
-            ? SplitIndexNameParts(obj.Name.Parts)
-            : SplitNameParts(obj.Name.Parts);
-
-        string script;
-        try
-        {
-            script = obj.GetScript();
-        }
-        catch
-        {
-            script = string.Empty;
-        }
-
-        // For tables we apply the same normalization pipeline that the file
-        // side uses: basic normalization, optional batch truncation, inline
-        // constraint stripping, then comparison-oriented normalization. This
-        // ensures that differences in default/primary key constraints or
-        // trailing commas do not cause false table Modify differences.
-        //
-        // For triggers, DacFx may return additional statements after the trigger
-        // definition (e.g., ALTER TABLE ... ENABLE TRIGGER, DISABLE TRIGGER).
-        // We truncate at the first GO to get just the trigger definition.
-        string definitionScript;
-        if (type == SqlObjectType.Table)
-        {
-            var normalized = SqlScriptNormalizer.Normalize(script);
-            var firstBatch = SqlScriptNormalizer.TruncateAfterFirstGo(normalized);
-            var withoutConstraints = SqlScriptNormalizer.StripInlineConstraints(firstBatch);
-            definitionScript = SqlScriptNormalizer.NormalizeForComparison(withoutConstraints);
-        }
-        else if (type == SqlObjectType.Trigger)
-        {
-            var normalized = SqlScriptNormalizer.Normalize(script);
-            var firstBatch = SqlScriptNormalizer.TruncateAfterFirstGo(normalized);
-            definitionScript = SqlScriptNormalizer.NormalizeForComparison(firstBatch);
-        }
-        else
-        {
-            definitionScript = SqlScriptNormalizer.NormalizeForComparison(script);
-        }
-
-        var scriptBytes = Encoding.UTF8.GetBytes(definitionScript);
-        var definitionHash = ComputeSha256(scriptBytes);
-
-        return new SchemaObjectSummary
-        {
-            SchemaName = schemaName,
-            ObjectName = objectName,
-            ObjectType = type,
-            ModifiedDate = null,
-            DefinitionHash = definitionHash,
-            DefinitionScript = definitionScript
-        };
-    }
-
-    internal static (string SchemaName, string ObjectName) SplitNameParts(IList<string> parts)
-    {
-        if (parts is null || parts.Count == 0)
-        {
-            return (string.Empty, string.Empty);
-        }
-
-        if (parts.Count == 1)
-        {
-            return ("dbo", parts[0]);
-        }
-
-        // Use the last two parts as schema and object name. For names like [db].[schema].[name], this
-        // correctly picks the schema and object name.
-        var objectName = parts[parts.Count - 1];
-        var schemaName = parts[parts.Count - 2];
-        return (schemaName, objectName);
-    }
-
-    internal static (string SchemaName, string ObjectName) SplitIndexNameParts(IList<string> parts)
-    {
-        if (parts is null || parts.Count == 0)
-        {
-            return (string.Empty, string.Empty);
-        }
-
-        // DacFx typically represents index names as [schema].[table].[index]
-        // or [database].[schema].[table].[index]. We want SchemaName to be
-        // the owning table schema and ObjectName to uniquely identify the
-        // index per table so that indexes with the same name on different
-        // tables do not collide during comparison.
-        if (parts.Count >= 3)
-        {
-            var schemaName = parts[parts.Count - 3];
-            var tableName = parts[parts.Count - 2];
-            var indexName = parts[parts.Count - 1];
-            var objectName = string.IsNullOrWhiteSpace(tableName)
-                ? indexName
-                : $"{tableName}.{indexName}";
-            return (schemaName, objectName);
-        }
-
-        // Fall back to the generic behaviour if the structure is unexpected.
-        return SplitNameParts(parts);
-    }
-
-    private static async Task<byte[]> ExtractDacpacBytesAsync(DatabaseConnection connection, CancellationToken cancellationToken)
-    {
-        using var ms = new MemoryStream();
-        var dacServices = new DacServices(connection.ConnectionString);
-
-        var applicationName = "SqlSyncService";
-        var version = new Version(1, 0, 0, 0);
-
-        await Task.Run(
-            () => dacServices.Extract(
-                ms,
-                connection.Database,
-                applicationName,
-                version,
-                null,
-                null,
-                new DacExtractOptions(),
-                cancellationToken),
-            cancellationToken).ConfigureAwait(false);
-
-        return ms.ToArray();
+        return ComputeSha256(Encoding.UTF8.GetBytes(combined));
     }
 
     private static string ComputeSha256(byte[] data)
     {
-        using var sha = SHA256.Create();
-        var hash = sha.ComputeHash(data);
+        var hash = SHA256.HashData(data);
         return Convert.ToHexString(hash);
     }
 }
-

@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using Microsoft.Extensions.Options;
 using SqlSyncService.Configuration;
 using SqlSyncService.Domain.Changes;
+using SqlSyncService.Domain.Comparisons;
 
 namespace SqlSyncService.ChangeDetection;
 
@@ -35,6 +36,16 @@ public sealed class ChangeDebouncer : IChangeDebouncer, IDisposable
 
     public void RecordChange(Guid subscriptionId, string objectIdentifier, ChangeSource source, ChangeType type)
     {
+        RecordChangeInternal(subscriptionId, objectIdentifier, source, type, objectType: null);
+    }
+
+    public void RecordChange(Guid subscriptionId, string objectIdentifier, ChangeSource source, ChangeType type, SqlObjectType objectType)
+    {
+        RecordChangeInternal(subscriptionId, objectIdentifier, source, type, objectType);
+    }
+
+    private void RecordChangeInternal(Guid subscriptionId, string objectIdentifier, ChangeSource source, ChangeType type, SqlObjectType? objectType)
+    {
         if (_disposed)
         {
             throw new ObjectDisposedException(nameof(ChangeDebouncer));
@@ -42,12 +53,12 @@ public sealed class ChangeDebouncer : IChangeDebouncer, IDisposable
 
         var state = _subscriptionStates.GetOrAdd(subscriptionId, _ => new DebounceState());
 
-        state.AddChange(subscriptionId, objectIdentifier, source, type);
+        state.AddChange(subscriptionId, objectIdentifier, source, type, objectType);
         state.ResetTimer(_debounceWindow, () => FlushBatch(subscriptionId));
 
         _logger.LogDebug(
-            "Recorded change for subscription {SubscriptionId}: {ObjectIdentifier} ({Source}/{Type})",
-            subscriptionId, objectIdentifier, source, type);
+            "Recorded change for subscription {SubscriptionId}: {ObjectIdentifier} ({Source}/{Type}/{ObjectType})",
+            subscriptionId, objectIdentifier, source, type, objectType?.ToString() ?? "Unknown");
     }
 
     private void FlushBatch(Guid subscriptionId)
@@ -98,7 +109,7 @@ public sealed class ChangeDebouncer : IChangeDebouncer, IDisposable
         private DateTime _batchStartedAt;
         private bool _disposed;
 
-        public void AddChange(Guid subscriptionId, string objectIdentifier, ChangeSource source, ChangeType type)
+        public void AddChange(Guid subscriptionId, string objectIdentifier, ChangeSource source, ChangeType type, SqlObjectType? objectType)
         {
             lock (_lock)
             {
@@ -116,7 +127,8 @@ public sealed class ChangeDebouncer : IChangeDebouncer, IDisposable
                     Source = source,
                     Type = type,
                     DetectedAt = DateTime.UtcNow,
-                    IsProcessed = false
+                    IsProcessed = false,
+                    ObjectType = objectType
                 };
             }
         }

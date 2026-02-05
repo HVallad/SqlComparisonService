@@ -8,9 +8,20 @@ public class SchemaSnapshot
     public Guid SubscriptionId { get; set; }
     public DateTime CapturedAt { get; set; }
     public string DatabaseVersion { get; set; } = string.Empty;
-    public byte[] DacpacBytes { get; set; } = Array.Empty<byte>();
+	    /// <summary>
+	    /// Tracks which normalization pipeline version has been applied to this
+	    /// snapshot. Version 0 means "unknown/legacy" (no migration applied).
+	    /// </summary>
+	    public int NormalizationVersion { get; set; }
     public string Hash { get; set; } = string.Empty;
     public List<SchemaObjectSummary> Objects { get; set; } = new();
+
+	    /// <summary>
+	    /// Current normalization pipeline version. When new normalization rules
+	    /// are introduced that require migrating persisted snapshots, this value
+	    /// should be incremented and migration logic updated accordingly.
+	    /// </summary>
+	    public const int CurrentNormalizationVersion = 1;
 }
 
 public class SchemaObjectSummary

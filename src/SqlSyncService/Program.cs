@@ -106,6 +106,7 @@ builder.Services.AddHealthChecks();
 builder.Services.AddScoped<IDatabaseConnectionTester, DatabaseConnectionTester>();
 builder.Services.AddScoped<IFolderValidator, FolderValidator>();
 builder.Services.AddScoped<ISubscriptionService, SubscriptionService>();
+builder.Services.AddScoped<IDatabaseSchemaReader, DatabaseSchemaReader>();
 builder.Services.AddScoped<IDatabaseModelBuilder, DatabaseModelBuilder>();
 builder.Services.AddScoped<IFileModelBuilder, FileModelBuilder>();
 builder.Services.AddScoped<ISchemaComparer, SchemaComparer>();

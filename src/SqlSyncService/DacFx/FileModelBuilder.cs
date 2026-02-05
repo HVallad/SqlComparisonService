@@ -78,14 +78,16 @@ public class FileModelBuilder : IFileModelBuilder
             var baseObjectName = ExtractObjectName(fileNameWithoutExtension);
             var stripped = StripComments(normalizedContent);
 
-            // Extract object name from the DDL statement itself rather than relying
-            // solely on the filename. This ensures that object names containing dots
-            // (e.g., [Schema].[Audit.TableName]) are correctly preserved.
-            var objectName = TryExtractObjectNameForType(stripped, objectType, baseObjectName);
+            // Extract both schema and object name from the DDL statement itself rather
+            // than relying solely on the filename. This ensures that object names
+            // containing dots (e.g., [Schema].[Audit.TableName]) are correctly preserved
+            // and the schema is available for accurate comparison key generation.
+            var (schemaName, objectName) = TryExtractSchemaAndObjectNameForType(stripped, objectType, baseObjectName);
 
             var primaryEntry = new FileObjectEntry
             {
                 FilePath = relativePath,
+                SchemaName = schemaName,
                 ObjectName = objectName,
                 ObjectType = objectType,
                 ContentHash = contentHash,
@@ -102,9 +104,9 @@ public class FileModelBuilder : IFileModelBuilder
             {
                 foreach (var index in ExtractIndexesFromScript(normalizedContent))
                 {
-                    // Apply the same whitespace canonicalization as the primary object
-                    // to ensure consistent comparison with the database side.
-                    var indexComparisonContent = SqlScriptNormalizer.NormalizeForComparison(index.Script);
+                    // Apply index-specific whitespace canonicalization that collapses
+                    // newlines to ensure consistent comparison with the database side.
+                    var indexComparisonContent = SqlScriptNormalizer.NormalizeIndexForComparison(index.Script);
                     var indexContentBytes = Encoding.UTF8.GetBytes(indexComparisonContent);
                     var indexHash = ComputeSha256(indexContentBytes);
                     var indexKey = BuildIndexCacheKey(relativePath, index.ObjectName);
@@ -604,9 +606,22 @@ public class FileModelBuilder : IFileModelBuilder
     /// </summary>
     private static string TryExtractObjectNameFromDdl(string sql, string[] patterns)
     {
+        var (_, objectName) = TryExtractSchemaAndObjectNameFromDdl(sql, patterns);
+        return objectName;
+    }
+
+    /// <summary>
+    /// Generic helper that extracts both schema and object name from a DDL statement.
+    /// For a statement like CREATE TABLE [Schema].[Audit.TableName], returns ("Schema", "Audit.TableName").
+    /// For a statement like CREATE TABLE [TableName], returns ("", "TableName").
+    /// Patterns should use single spaces; this method will convert them to regex patterns
+    /// that match one or more whitespace characters.
+    /// </summary>
+    private static (string SchemaName, string ObjectName) TryExtractSchemaAndObjectNameFromDdl(string sql, string[] patterns)
+    {
         if (string.IsNullOrWhiteSpace(sql))
         {
-            return string.Empty;
+            return (string.Empty, string.Empty);
         }
 
         // Find the position after the first matching pattern using whitespace-tolerant matching.
@@ -624,18 +639,25 @@ public class FileModelBuilder : IFileModelBuilder
 
         if (matchEndIndex < 0)
         {
-            return string.Empty;
+            return (string.Empty, string.Empty);
         }
 
         // Parse the identifier chain (e.g., [Schema].[ObjectName] or schema.objectName)
         var identifiers = ParseIdentifierChain(sql, matchEndIndex);
         if (identifiers.Count == 0)
         {
-            return string.Empty;
+            return (string.Empty, string.Empty);
         }
 
-        // Return the last identifier as the object name (may contain dots if it was bracketed)
-        return identifiers[identifiers.Count - 1];
+        if (identifiers.Count == 1)
+        {
+            // No schema, just object name
+            return (string.Empty, identifiers[0]);
+        }
+
+        // Schema is the first identifier, object name is the last
+        // (handles both 2-part and 3-part names like database.schema.object)
+        return (identifiers[identifiers.Count - 2], identifiers[identifiers.Count - 1]);
     }
 
     /// <summary>
@@ -668,20 +690,41 @@ public class FileModelBuilder : IFileModelBuilder
     /// </summary>
     private static string TryExtractObjectNameForType(string sql, SqlObjectType objectType, string fallbackName)
     {
-        var extracted = objectType switch
+        var (_, objectName) = TryExtractSchemaAndObjectNameForType(sql, objectType, fallbackName);
+        return objectName;
+    }
+
+    /// <summary>
+    /// Extracts both schema and object name from a DDL statement based on the object type.
+    /// Falls back to the provided fallback name for the object name if extraction fails.
+    /// </summary>
+    internal static (string SchemaName, string ObjectName) TryExtractSchemaAndObjectNameForType(
+        string sql, SqlObjectType objectType, string fallbackName)
+    {
+        var (schema, objectName) = objectType switch
         {
-            SqlObjectType.Table => TryExtractTableName(sql),
-            SqlObjectType.View => TryExtractViewName(sql),
-            SqlObjectType.StoredProcedure => TryExtractProcedureName(sql),
-            SqlObjectType.ScalarFunction or SqlObjectType.TableValuedFunction or SqlObjectType.InlineTableValuedFunction => TryExtractFunctionName(sql),
-            SqlObjectType.Trigger => TryExtractTriggerName(sql),
-            SqlObjectType.Index => ExtractIndexObjectName(sql, fallbackName),
-            SqlObjectType.User => TryExtractUserName(sql),
-            SqlObjectType.Role => TryExtractRoleName(sql),
-            _ => string.Empty
+            SqlObjectType.Table => TryExtractSchemaAndObjectNameFromDdl(sql, new[] { "create table", "alter table" }),
+            SqlObjectType.View => TryExtractSchemaAndObjectNameFromDdl(sql, new[] { "create or alter view", "create view", "alter view" }),
+            SqlObjectType.StoredProcedure => TryExtractSchemaAndObjectNameFromDdl(sql, new[]
+            {
+                "create or alter procedure", "create or alter proc",
+                "create procedure", "create proc",
+                "alter procedure", "alter proc"
+            }),
+            SqlObjectType.ScalarFunction or SqlObjectType.TableValuedFunction or SqlObjectType.InlineTableValuedFunction =>
+                TryExtractSchemaAndObjectNameFromDdl(sql, new[] { "create or alter function", "create function", "alter function" }),
+            SqlObjectType.Trigger => TryExtractSchemaAndObjectNameFromDdl(sql, new[] { "create or alter trigger", "create trigger", "alter trigger" }),
+            SqlObjectType.Index => (string.Empty, ExtractIndexObjectName(sql, fallbackName)),
+            SqlObjectType.User => TryExtractSchemaAndObjectNameFromDdl(sql, new[] { "create or alter user", "create user", "alter user" }),
+            SqlObjectType.Role => TryExtractSchemaAndObjectNameFromDdl(sql, new[]
+            {
+                "create or alter role", "create role",
+                "create server role"
+            }),
+            _ => (string.Empty, string.Empty)
         };
 
-        return !string.IsNullOrWhiteSpace(extracted) ? extracted : fallbackName;
+        return (schema, !string.IsNullOrWhiteSpace(objectName) ? objectName : fallbackName);
     }
 
     /// <summary>
