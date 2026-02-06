@@ -213,156 +213,221 @@ public sealed class ComparisonOrchestrator : IComparisonOrchestrator
         }
     }
 
-    public async Task<SingleObjectComparisonResult> CompareObjectAsync(
-        Guid subscriptionId,
-        string schemaName,
-        string objectName,
-        SqlObjectType objectType,
-        CancellationToken cancellationToken = default)
-    {
-        if (subscriptionId == Guid.Empty) throw new ArgumentException("SubscriptionId must not be empty.", nameof(subscriptionId));
-        if (string.IsNullOrWhiteSpace(objectName)) throw new ArgumentException("ObjectName must not be empty.", nameof(objectName));
+		    public async Task<SingleObjectComparisonResult> CompareObjectAsync(
+		        Guid subscriptionId,
+		        string schemaName,
+		        string objectName,
+		        SqlObjectType objectType,
+		        CancellationToken cancellationToken = default)
+		    {
+		        if (subscriptionId == Guid.Empty) throw new ArgumentException("SubscriptionId must not be empty.", nameof(subscriptionId));
+		        if (string.IsNullOrWhiteSpace(objectName)) throw new ArgumentException("ObjectName must not be empty.", nameof(objectName));
 
-        var startTime = DateTime.UtcNow;
+		        var startTime = DateTime.UtcNow;
 
-        _logger.LogInformation(
-            "Starting single-object comparison for {Schema}.{Object} ({Type}) in subscription {SubscriptionId}",
-            schemaName, objectName, objectType, subscriptionId);
+		        var semaphore = _semaphore ?? throw new InvalidOperationException("Comparison semaphore is not initialized.");
+		        var acquired = false;
 
-        var subscription = await _subscriptionRepository.GetByIdAsync(subscriptionId, cancellationToken).ConfigureAwait(false)
-            ?? throw new SubscriptionNotFoundException(subscriptionId);
+		        try
+		        {
+		            acquired = await semaphore.WaitAsync(0, cancellationToken).ConfigureAwait(false);
+		            if (!acquired)
+		            {
+		                throw new ComparisonInProgressException("A comparison is already in progress. Please try again later.");
+		            }
 
-        // Fetch filtered snapshot for single-object comparison - only extracts the specific object type
-        // This is significantly faster than extracting the full schema
-        var filteredSnapshot = await _databaseModelBuilder.BuildSnapshotAsync(
-            subscriptionId,
-            subscription.Database,
-            objectType, // Pass object type filter for optimized extraction
-            cancellationToken).ConfigureAwait(false);
-        var fileCache = await _fileModelBuilder.BuildCacheAsync(subscriptionId, subscription.Project, cancellationToken).ConfigureAwait(false);
+		            _logger.LogInformation(
+		                "Starting single-object comparison for {Schema}.{Object} ({Type}) in subscription {SubscriptionId}",
+		                schemaName, objectName, objectType, subscriptionId);
 
-        // Find the specific object in the filtered snapshot
-        var dbObject = filteredSnapshot.Objects.FirstOrDefault(o =>
-            string.Equals(o.SchemaName, schemaName, StringComparison.OrdinalIgnoreCase) &&
-            string.Equals(o.ObjectName, objectName, StringComparison.OrdinalIgnoreCase) &&
-            o.ObjectType == objectType);
+		            var subscription = await _subscriptionRepository.GetByIdAsync(subscriptionId, cancellationToken).ConfigureAwait(false)
+		                ?? throw new SubscriptionNotFoundException(subscriptionId);
 
-        var fileObject = fileCache.FileEntries.Values.FirstOrDefault(f =>
-            string.Equals(f.ObjectName, objectName, StringComparison.OrdinalIgnoreCase) &&
-            f.ObjectType == objectType);
+		            // 1. Get or create cached snapshot so we can incrementally update it with the single object
+		            var snapshot = await _schemaSnapshotRepository.GetLatestForSubscriptionAsync(subscriptionId, cancellationToken).ConfigureAwait(false);
 
-        var result = new SingleObjectComparisonResult
-        {
-            SubscriptionId = subscriptionId,
-            SchemaName = schemaName,
-            ObjectName = objectName,
-            ObjectType = objectType,
-            ExistsInDatabase = dbObject != null,
-            ExistsInFileSystem = fileObject != null,
-            ComparedAt = DateTime.UtcNow
-        };
+		            if (snapshot is null)
+		            {
+		                _logger.LogDebug(
+		                    "No cached snapshot found, building full snapshot for subscription {SubscriptionId} before single-object comparison",
+		                    subscriptionId);
 
-        // Determine difference
-        if (dbObject == null && fileObject == null)
-        {
-            // Object doesn't exist in either place
-            result.IsSynchronized = true;
-        }
-        else if (dbObject != null && fileObject == null)
-        {
-            // Object exists in database but not in files - Delete difference
-            result.IsSynchronized = false;
-            result.Difference = new SchemaDifference
-            {
-                Id = Guid.NewGuid(),
-                ObjectName = objectName,
-                SchemaName = schemaName,
-                ObjectType = objectType,
-                DifferenceType = DifferenceType.Delete,
-                Source = DifferenceSource.Database,
-                DatabaseDefinition = dbObject.DefinitionScript,
-                FileDefinition = null,
-                FilePath = null
-            };
-        }
-        else if (dbObject == null && fileObject != null)
-        {
-            // Object exists in files but not in database - Add difference
-            result.IsSynchronized = false;
-            result.Difference = new SchemaDifference
-            {
-                Id = Guid.NewGuid(),
-                ObjectName = objectName,
-                SchemaName = schemaName,
-                ObjectType = objectType,
-                DifferenceType = DifferenceType.Add,
-                Source = DifferenceSource.FileSystem,
-                DatabaseDefinition = null,
-                FileDefinition = fileObject.Content,
-                FilePath = fileObject.FilePath
-            };
-        }
-        else if (string.Equals(dbObject!.DefinitionHash, fileObject!.ContentHash, StringComparison.Ordinal))
-        {
-            // Both exist and hashes match - synchronized
-            result.IsSynchronized = true;
-        }
-        else
-        {
-            // Hashes differ - Modify difference
-            result.IsSynchronized = false;
-            result.Difference = new SchemaDifference
-            {
-                Id = Guid.NewGuid(),
-                ObjectName = objectName,
-                SchemaName = schemaName,
-                ObjectType = objectType,
-                DifferenceType = DifferenceType.Modify,
-                Source = DifferenceSource.FileSystem,
-                DatabaseDefinition = dbObject.DefinitionScript,
-                FileDefinition = fileObject.Content,
-                FilePath = fileObject.FilePath
-            };
-        }
+		                snapshot = await _databaseModelBuilder.BuildSnapshotAsync(subscriptionId, subscription.Database, cancellationToken).ConfigureAwait(false);
 
-        // Persist the comparison result
-        var duration = DateTime.UtcNow - startTime;
-        var differences = result.Difference != null ? new List<SchemaDifference> { result.Difference } : new List<SchemaDifference>();
+		                // Ensure the new snapshot is persisted so subsequent incremental updates work correctly
+		                await _schemaSnapshotRepository.DeleteForSubscriptionAsync(subscriptionId, cancellationToken).ConfigureAwait(false);
+		                await _schemaSnapshotRepository.AddAsync(snapshot, cancellationToken).ConfigureAwait(false);
 
-        var comparisonResult = new ComparisonResult
-        {
-            Id = Guid.NewGuid(),
-            SubscriptionId = subscriptionId,
-            ComparedAt = result.ComparedAt,
-            Duration = duration,
-            Status = result.IsSynchronized ? ComparisonStatus.Synchronized : ComparisonStatus.HasDifferences,
-            Differences = differences,
-            Summary = new ComparisonSummary
-            {
-                TotalDifferences = differences.Count,
-                Additions = differences.Count(d => d.DifferenceType == DifferenceType.Add),
-                Modifications = differences.Count(d => d.DifferenceType == DifferenceType.Modify),
-                Deletions = differences.Count(d => d.DifferenceType == DifferenceType.Delete),
-                ObjectsCompared = 1,
-                ObjectsUnchanged = result.IsSynchronized ? 1 : 0,
-                ByObjectType = differences.Count > 0
-                    ? new Dictionary<string, int> { { objectType.ToString(), 1 } }
-                    : new Dictionary<string, int>()
-            }
-        };
+		                _logger.LogInformation(
+		                    "Single-object comparison created new snapshot ID {SnapshotId} with {ObjectCount} objects for subscription {SubscriptionId}",
+		                    snapshot.Id, snapshot.Objects.Count, subscriptionId);
+		            }
+		            else
+		            {
+		                _logger.LogInformation(
+		                    "Single-object comparison using cached snapshot ID {SnapshotId} captured at {CapturedAt} with {ObjectCount} objects for subscription {SubscriptionId}",
+		                    snapshot.Id, snapshot.CapturedAt, snapshot.Objects.Count, subscriptionId);
+		            }
 
-        await _comparisonHistoryRepository.AddAsync(comparisonResult, cancellationToken).ConfigureAwait(false);
+		            // 2. Query just the requested object from the database
+		            var dbObject = await _schemaReader.GetObjectAsync(
+		                subscription.Database,
+		                schemaName,
+		                objectName,
+		                objectType,
+		                cancellationToken).ConfigureAwait(false);
 
-        subscription.LastComparedAt = result.ComparedAt;
-        await _subscriptionRepository.UpdateAsync(subscription, cancellationToken).ConfigureAwait(false);
+		            if (dbObject is not null)
+		            {
+		                // Update or insert the single object into the cached snapshot
+		                await _schemaSnapshotRepository.UpdateObjectsAsync(snapshot.Id, new[] { dbObject }, cancellationToken).ConfigureAwait(false);
+		            }
+		            else
+		            {
+		                // Object no longer exists in the database - remove it from the cached snapshot
+		                await _schemaSnapshotRepository.RemoveObjectAsync(snapshot.Id, schemaName, objectName, objectType, cancellationToken).ConfigureAwait(false);
+		            }
 
-        _logger.LogInformation(
-            "Single-object comparison completed for {Schema}.{Object} in {Duration:N0}ms - {Status}",
-            schemaName, objectName, duration.TotalMilliseconds,
-            result.IsSynchronized ? "Synchronized" : "HasDifferences");
+		            // 3. Reload updated snapshot to get the latest state (mirrors CompareObjectsAsync)
+		            var originalSnapshotId = snapshot.Id;
+		            snapshot = await _schemaSnapshotRepository.GetLatestForSubscriptionAsync(subscriptionId, cancellationToken).ConfigureAwait(false)
+		                ?? snapshot; // Defensive fallback
 
-        return result;
-    }
+		            if (snapshot.Id != originalSnapshotId)
+		            {
+		                _logger.LogWarning(
+		                    "Snapshot ID changed during single-object comparison! Original: {OriginalId}, New: {NewId}",
+		                    originalSnapshotId, snapshot.Id);
+		            }
+
+		            _logger.LogDebug(
+		                "After single-object update: snapshot ID {SnapshotId} has {ObjectCount} objects",
+		                snapshot.Id, snapshot.Objects.Count);
+
+		            // 4. Build file cache and locate the corresponding file object
+		            var fileCache = await _fileModelBuilder.BuildCacheAsync(subscriptionId, subscription.Project, cancellationToken).ConfigureAwait(false);
+
+		            _logger.LogDebug(
+		                "File cache built with {FileCount} files for subscription {SubscriptionId} during single-object comparison",
+		                fileCache.FileEntries.Count, subscriptionId);
+
+		            var fileObject = fileCache.FileEntries.Values.FirstOrDefault(f =>
+		                string.Equals(f.ObjectName, objectName, StringComparison.OrdinalIgnoreCase) &&
+		                f.ObjectType == objectType);
+
+		            var result = new SingleObjectComparisonResult
+		            {
+		                SubscriptionId = subscriptionId,
+		                SchemaName = schemaName,
+		                ObjectName = objectName,
+		                ObjectType = objectType,
+		                ExistsInDatabase = dbObject != null,
+		                ExistsInFileSystem = fileObject != null,
+		                ComparedAt = DateTime.UtcNow
+		            };
+
+		            // 5. Determine the per-object difference for the requested object
+		            if (dbObject == null && fileObject == null)
+		            {
+		                // Object doesn't exist in either place
+		                result.IsSynchronized = true;
+		            }
+		            else if (dbObject != null && fileObject == null)
+		            {
+		                // Object exists in database but not in files - Delete difference
+		                result.IsSynchronized = false;
+		                result.Difference = new SchemaDifference
+		                {
+		                    Id = Guid.NewGuid(),
+		                    ObjectName = objectName,
+		                    SchemaName = schemaName,
+		                    ObjectType = objectType,
+		                    DifferenceType = DifferenceType.Delete,
+		                    Source = DifferenceSource.Database,
+		                    DatabaseDefinition = dbObject.DefinitionScript,
+		                    FileDefinition = null,
+		                    FilePath = null
+		                };
+		            }
+		            else if (dbObject == null && fileObject != null)
+		            {
+		                // Object exists in files but not in database - Add difference
+		                result.IsSynchronized = false;
+		                result.Difference = new SchemaDifference
+		                {
+		                    Id = Guid.NewGuid(),
+		                    ObjectName = objectName,
+		                    SchemaName = schemaName,
+		                    ObjectType = objectType,
+		                    DifferenceType = DifferenceType.Add,
+		                    Source = DifferenceSource.FileSystem,
+		                    DatabaseDefinition = null,
+		                    FileDefinition = fileObject.Content,
+		                    FilePath = fileObject.FilePath
+		                };
+		            }
+		            else if (string.Equals(dbObject!.DefinitionHash, fileObject!.ContentHash, StringComparison.Ordinal))
+		            {
+		                // Both exist and hashes match - synchronized
+		                result.IsSynchronized = true;
+		            }
+		            else
+		            {
+		                // Hashes differ - Modify difference
+		                result.IsSynchronized = false;
+		                result.Difference = new SchemaDifference
+		                {
+		                    Id = Guid.NewGuid(),
+		                    ObjectName = objectName,
+		                    SchemaName = schemaName,
+		                    ObjectType = objectType,
+		                    DifferenceType = DifferenceType.Modify,
+		                    Source = DifferenceSource.FileSystem,
+		                    DatabaseDefinition = dbObject.DefinitionScript,
+		                    FileDefinition = fileObject.Content,
+		                    FilePath = fileObject.FilePath
+		                };
+		            }
+
+		            // 6. Run a full comparison so history/summary reflect the entire subscription
+		            var differences = await _schemaComparer.CompareAsync(snapshot, fileCache, subscription.Options, cancellationToken).ConfigureAwait(false);
+		            var unsupportedObjects = BuildUnsupportedObjects(snapshot, fileCache);
+
+		            var duration = DateTime.UtcNow - startTime;
+		            var status = differences.Count == 0 ? ComparisonStatus.Synchronized : ComparisonStatus.HasDifferences;
+
+		            var comparisonResult = new ComparisonResult
+		            {
+		                Id = Guid.NewGuid(),
+		                SubscriptionId = subscriptionId,
+		                ComparedAt = result.ComparedAt,
+		                Duration = duration,
+		                Status = status,
+		                Differences = differences.ToList(),
+		                Summary = BuildSummary(differences, snapshot, fileCache, subscription.Options),
+		                UnsupportedObjects = unsupportedObjects
+		            };
+
+		            await _comparisonHistoryRepository.AddAsync(comparisonResult, cancellationToken).ConfigureAwait(false);
+
+		            subscription.LastComparedAt = result.ComparedAt;
+		            await _subscriptionRepository.UpdateAsync(subscription, cancellationToken).ConfigureAwait(false);
+
+		            _logger.LogInformation(
+		                "Single-object comparison completed for {Schema}.{Object} in {Duration:N0}ms - {Status}",
+		                schemaName, objectName, duration.TotalMilliseconds,
+		                status == ComparisonStatus.Synchronized ? "Synchronized" : "HasDifferences");
+
+		            return result;
+		        }
+		        finally
+		        {
+		            if (acquired)
+		            {
+		                semaphore.Release();
+		            }
+		        }
+		    }
 
     public async Task<ComparisonResult> CompareObjectsAsync(
         Guid subscriptionId,
