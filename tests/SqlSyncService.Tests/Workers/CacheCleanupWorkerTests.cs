@@ -19,7 +19,7 @@ public class CacheCleanupWorkerTests
         // Arrange
         var snapshotRepo = new InMemorySchemaSnapshotRepository();
         var subscriptionId = Guid.NewGuid();
-        
+
         // Add old snapshot (8 days old, retention is 7 days)
         snapshotRepo.Snapshots.Add(new SchemaSnapshot
         {
@@ -27,7 +27,7 @@ public class CacheCleanupWorkerTests
             SubscriptionId = subscriptionId,
             CapturedAt = DateTime.UtcNow.AddDays(-8)
         });
-        
+
         // Add recent snapshot
         snapshotRepo.Snapshots.Add(new SchemaSnapshot
         {
@@ -53,7 +53,7 @@ public class CacheCleanupWorkerTests
         // Arrange
         var snapshotRepo = new InMemorySchemaSnapshotRepository();
         var subscriptionId = Guid.NewGuid();
-        
+
         // Add 15 snapshots (max is 10)
         for (int i = 0; i < 15; i++)
         {
@@ -90,7 +90,7 @@ public class CacheCleanupWorkerTests
         // Arrange
         var historyRepo = new InMemoryComparisonHistoryRepository();
         var subscriptionId = Guid.NewGuid();
-        
+
         // Add old history entry (31 days old, retention is 30 days)
         historyRepo.Results.Add(new ComparisonResult
         {
@@ -98,7 +98,7 @@ public class CacheCleanupWorkerTests
             SubscriptionId = subscriptionId,
             ComparedAt = DateTime.UtcNow.AddDays(-31)
         });
-        
+
         // Add recent history entry
         historyRepo.Results.Add(new ComparisonResult
         {
@@ -123,7 +123,7 @@ public class CacheCleanupWorkerTests
         // Arrange
         var pendingChangeRepo = new InMemoryPendingChangeRepository();
         var subscriptionId = Guid.NewGuid();
-        
+
         // Add old processed change (2 days old, retention is 1 day)
         pendingChangeRepo.Changes.Add(new DetectedChange
         {
@@ -133,7 +133,7 @@ public class CacheCleanupWorkerTests
             IsProcessed = true,
             ProcessedAt = DateTime.UtcNow.AddDays(-2)
         });
-        
+
         // Add recent unprocessed change
         pendingChangeRepo.Changes.Add(new DetectedChange
         {

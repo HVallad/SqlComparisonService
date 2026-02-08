@@ -833,113 +833,113 @@ public class SchemaComparerTests
         Assert.Equal("CREATE INDEX [IX_Primary] ON [dbo].[Table2]([Id] DESC);", indexDiff.FileDefinition);
     }
 
-	    [Fact]
-	    public async Task CompareAsync_Treats_Inline_And_TableValued_Function_As_Same_Object_When_Definitions_Match()
-	    {
-	        // Arrange - database sees an inline table-valued function (IF) while the
-	        // file model classifies it as a TableValuedFunction. When the hashes
-	        // match, we should see no differences.
-	        var comparer = new SchemaComparer();
-	        var subscriptionId = Guid.NewGuid();
+    [Fact]
+    public async Task CompareAsync_Treats_Inline_And_TableValued_Function_As_Same_Object_When_Definitions_Match()
+    {
+        // Arrange - database sees an inline table-valued function (IF) while the
+        // file model classifies it as a TableValuedFunction. When the hashes
+        // match, we should see no differences.
+        var comparer = new SchemaComparer();
+        var subscriptionId = Guid.NewGuid();
 
-	        var snapshot = new SchemaSnapshot
-	        {
-	            SubscriptionId = subscriptionId,
-	            Objects =
-	            {
-	                new SchemaObjectSummary
-	                {
-	                    SchemaName = "dbo",
-	                    ObjectName = "fn_GetDashboardInfo",
-	                    ObjectType = SqlObjectType.InlineTableValuedFunction,
-	                    DefinitionHash = "hash-fn",
-	                    DefinitionScript = "CREATE FUNCTION [dbo].[fn_GetDashboardInfo]() RETURNS TABLE AS RETURN (SELECT 1 AS Value);"
-	                }
-	            }
-	        };
+        var snapshot = new SchemaSnapshot
+        {
+            SubscriptionId = subscriptionId,
+            Objects =
+                {
+                    new SchemaObjectSummary
+                    {
+                        SchemaName = "dbo",
+                        ObjectName = "fn_GetDashboardInfo",
+                        ObjectType = SqlObjectType.InlineTableValuedFunction,
+                        DefinitionHash = "hash-fn",
+                        DefinitionScript = "CREATE FUNCTION [dbo].[fn_GetDashboardInfo]() RETURNS TABLE AS RETURN (SELECT 1 AS Value);"
+                    }
+                }
+        };
 
-	        var cache = new FileModelCache
-	        {
-	            SubscriptionId = subscriptionId,
-	            FileEntries =
-	            {
-	                ["dbo/Functions/fn_GetDashboardInfo.sql"] = new FileObjectEntry
-	                {
-	                    FilePath = "dbo/Functions/fn_GetDashboardInfo.sql",
-	                    ObjectName = "fn_GetDashboardInfo",
-	                    ObjectType = SqlObjectType.TableValuedFunction,
-	                    ContentHash = "hash-fn",
-	                    LastModified = DateTime.UtcNow,
-	                    Content = "CREATE FUNCTION [dbo].[fn_GetDashboardInfo]() RETURNS TABLE AS RETURN (SELECT 1 AS Value);"
-	                }
-	            }
-	        };
+        var cache = new FileModelCache
+        {
+            SubscriptionId = subscriptionId,
+            FileEntries =
+                {
+                    ["dbo/Functions/fn_GetDashboardInfo.sql"] = new FileObjectEntry
+                    {
+                        FilePath = "dbo/Functions/fn_GetDashboardInfo.sql",
+                        ObjectName = "fn_GetDashboardInfo",
+                        ObjectType = SqlObjectType.TableValuedFunction,
+                        ContentHash = "hash-fn",
+                        LastModified = DateTime.UtcNow,
+                        Content = "CREATE FUNCTION [dbo].[fn_GetDashboardInfo]() RETURNS TABLE AS RETURN (SELECT 1 AS Value);"
+                    }
+                }
+        };
 
-	        var options = new ComparisonOptions();
+        var options = new ComparisonOptions();
 
-	        // Act
-	        var differences = await comparer.CompareAsync(snapshot, cache, options);
+        // Act
+        var differences = await comparer.CompareAsync(snapshot, cache, options);
 
-	        // Assert
-	        Assert.Empty(differences);
-	    }
+        // Assert
+        Assert.Empty(differences);
+    }
 
-	    [Fact]
-	    public async Task CompareAsync_Reports_Single_Modify_For_Function_When_Types_Differ_But_Names_Match()
-	    {
-	        // Arrange - same schema and function name, but the database reports an
-	        // InlineTableValuedFunction while the file model reports a
-	        // TableValuedFunction and the definitions differ. We should surface a
-	        // single Modify difference, not separate Add/Delete entries.
-	        var comparer = new SchemaComparer();
-	        var subscriptionId = Guid.NewGuid();
+    [Fact]
+    public async Task CompareAsync_Reports_Single_Modify_For_Function_When_Types_Differ_But_Names_Match()
+    {
+        // Arrange - same schema and function name, but the database reports an
+        // InlineTableValuedFunction while the file model reports a
+        // TableValuedFunction and the definitions differ. We should surface a
+        // single Modify difference, not separate Add/Delete entries.
+        var comparer = new SchemaComparer();
+        var subscriptionId = Guid.NewGuid();
 
-	        var snapshot = new SchemaSnapshot
-	        {
-	            SubscriptionId = subscriptionId,
-	            Objects =
-	            {
-	                new SchemaObjectSummary
-	                {
-	                    SchemaName = "dbo",
-	                    ObjectName = "fn_GetDashboardInfo",
-	                    ObjectType = SqlObjectType.InlineTableValuedFunction,
-	                    DefinitionHash = "hash-db",
-	                    DefinitionScript = "CREATE FUNCTION [dbo].[fn_GetDashboardInfo]() RETURNS TABLE AS RETURN (SELECT 1 AS DbValue);"
-	                }
-	            }
-	        };
+        var snapshot = new SchemaSnapshot
+        {
+            SubscriptionId = subscriptionId,
+            Objects =
+                {
+                    new SchemaObjectSummary
+                    {
+                        SchemaName = "dbo",
+                        ObjectName = "fn_GetDashboardInfo",
+                        ObjectType = SqlObjectType.InlineTableValuedFunction,
+                        DefinitionHash = "hash-db",
+                        DefinitionScript = "CREATE FUNCTION [dbo].[fn_GetDashboardInfo]() RETURNS TABLE AS RETURN (SELECT 1 AS DbValue);"
+                    }
+                }
+        };
 
-	        var cache = new FileModelCache
-	        {
-	            SubscriptionId = subscriptionId,
-	            FileEntries =
-	            {
-	                ["dbo/Functions/fn_GetDashboardInfo.sql"] = new FileObjectEntry
-	                {
-	                    FilePath = "dbo/Functions/fn_GetDashboardInfo.sql",
-	                    ObjectName = "fn_GetDashboardInfo",
-	                    ObjectType = SqlObjectType.TableValuedFunction,
-	                    ContentHash = "hash-file",
-	                    LastModified = DateTime.UtcNow,
-	                    Content = "CREATE FUNCTION [dbo].[fn_GetDashboardInfo]() RETURNS TABLE AS RETURN (SELECT 1 AS FileValue);"
-	                }
-	            }
-	        };
+        var cache = new FileModelCache
+        {
+            SubscriptionId = subscriptionId,
+            FileEntries =
+                {
+                    ["dbo/Functions/fn_GetDashboardInfo.sql"] = new FileObjectEntry
+                    {
+                        FilePath = "dbo/Functions/fn_GetDashboardInfo.sql",
+                        ObjectName = "fn_GetDashboardInfo",
+                        ObjectType = SqlObjectType.TableValuedFunction,
+                        ContentHash = "hash-file",
+                        LastModified = DateTime.UtcNow,
+                        Content = "CREATE FUNCTION [dbo].[fn_GetDashboardInfo]() RETURNS TABLE AS RETURN (SELECT 1 AS FileValue);"
+                    }
+                }
+        };
 
-	        var options = new ComparisonOptions();
+        var options = new ComparisonOptions();
 
-	        // Act
-	        var differences = await comparer.CompareAsync(snapshot, cache, options);
+        // Act
+        var differences = await comparer.CompareAsync(snapshot, cache, options);
 
-	        // Assert
-	        var diff = Assert.Single(differences);
-	        Assert.Equal(DifferenceType.Modify, diff.DifferenceType);
-	        Assert.Equal("fn_GetDashboardInfo", diff.ObjectName);
-	        Assert.Equal("dbo", diff.SchemaName);
-	        Assert.Equal(SqlObjectType.InlineTableValuedFunction, diff.ObjectType);
-	        Assert.Equal("CREATE FUNCTION [dbo].[fn_GetDashboardInfo]() RETURNS TABLE AS RETURN (SELECT 1 AS DbValue);", diff.DatabaseDefinition);
-	        Assert.Equal("CREATE FUNCTION [dbo].[fn_GetDashboardInfo]() RETURNS TABLE AS RETURN (SELECT 1 AS FileValue);", diff.FileDefinition);
-	    }
+        // Assert
+        var diff = Assert.Single(differences);
+        Assert.Equal(DifferenceType.Modify, diff.DifferenceType);
+        Assert.Equal("fn_GetDashboardInfo", diff.ObjectName);
+        Assert.Equal("dbo", diff.SchemaName);
+        Assert.Equal(SqlObjectType.InlineTableValuedFunction, diff.ObjectType);
+        Assert.Equal("CREATE FUNCTION [dbo].[fn_GetDashboardInfo]() RETURNS TABLE AS RETURN (SELECT 1 AS DbValue);", diff.DatabaseDefinition);
+        Assert.Equal("CREATE FUNCTION [dbo].[fn_GetDashboardInfo]() RETURNS TABLE AS RETURN (SELECT 1 AS FileValue);", diff.FileDefinition);
+    }
 }
 

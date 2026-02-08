@@ -32,7 +32,7 @@ public class SchemaSnapshotRepository : ISchemaSnapshotRepository
         var result = _context.SchemaSnapshots.FindById(id);
         if (result is not null)
         {
-	            NormalizeLegacyObjectsIfNeeded(result);
+            NormalizeLegacyObjectsIfNeeded(result);
         }
 
         return Task.FromResult<SchemaSnapshot?>(result);
@@ -48,7 +48,7 @@ public class SchemaSnapshotRepository : ISchemaSnapshotRepository
         // Normalize legacy objects in all snapshots to ensure consistent schema/name format
         foreach (var snapshot in results)
         {
-	            NormalizeLegacyObjectsIfNeeded(snapshot);
+            NormalizeLegacyObjectsIfNeeded(snapshot);
         }
 
         return Task.FromResult<IReadOnlyList<SchemaSnapshot>>(results);
@@ -63,7 +63,7 @@ public class SchemaSnapshotRepository : ISchemaSnapshotRepository
 
         if (result is not null)
         {
-	            NormalizeLegacyObjectsIfNeeded(result);
+            NormalizeLegacyObjectsIfNeeded(result);
         }
 
         return Task.FromResult<SchemaSnapshot?>(result);
@@ -125,12 +125,12 @@ public class SchemaSnapshotRepository : ISchemaSnapshotRepository
 
         var objectCountBefore = snapshot.Objects.Count;
 
-	        // Normalize legacy objects (if needed) to ensure consistent schema/name
-	        // format for matching and migrate any truly legacy snapshots to the
-	        // current normalization pipeline. For snapshots created with the
-	        // current pipeline this is a no-op, which avoids double-normalizing
-	        // definition scripts and changing hashes unexpectedly.
-	        NormalizeLegacyObjectsIfNeeded(snapshot);
+        // Normalize legacy objects (if needed) to ensure consistent schema/name
+        // format for matching and migrate any truly legacy snapshots to the
+        // current normalization pipeline. For snapshots created with the
+        // current pipeline this is a no-op, which avoids double-normalizing
+        // definition scripts and changing hashes unexpectedly.
+        NormalizeLegacyObjectsIfNeeded(snapshot);
 
         foreach (var updatedObject in updatedObjects)
         {
@@ -178,9 +178,9 @@ public class SchemaSnapshotRepository : ISchemaSnapshotRepository
             return Task.CompletedTask;
         }
 
-	        // Normalize legacy objects (if needed) to ensure consistent schema/name
-	        // format for matching.
-	        NormalizeLegacyObjectsIfNeeded(snapshot);
+        // Normalize legacy objects (if needed) to ensure consistent schema/name
+        // format for matching.
+        NormalizeLegacyObjectsIfNeeded(snapshot);
 
         // Use helper that handles both new format (separate schema/name) and legacy format (schema in ObjectName)
         var existingIndex = FindObjectIndex(snapshot.Objects, schemaName, objectName, objectType);
@@ -294,44 +294,44 @@ public class SchemaSnapshotRepository : ISchemaSnapshotRepository
         return Convert.ToHexString(hash);
     }
 
-	    /// <summary>
-	    /// Ensures that a snapshot has been migrated to the current normalization
-	    /// pipeline. This method is idempotent and will only run the (potentially
-	    /// expensive) legacy normalization once per snapshot version.
-	    ///
-	    /// Snapshots created with <see cref="SchemaSnapshot.CurrentNormalizationVersion"/>
-	    /// are treated as already normalized and will not have their definition
-	    /// scripts or hashes altered on load, which prevents double-normalization
-	    /// from drifting hashes away from the file-side pipeline.
-	    /// </summary>
-	    private void NormalizeLegacyObjectsIfNeeded(SchemaSnapshot snapshot)
-	    {
-	        if (snapshot is null)
-	        {
-	            return;
-	        }
+    /// <summary>
+    /// Ensures that a snapshot has been migrated to the current normalization
+    /// pipeline. This method is idempotent and will only run the (potentially
+    /// expensive) legacy normalization once per snapshot version.
+    ///
+    /// Snapshots created with <see cref="SchemaSnapshot.CurrentNormalizationVersion"/>
+    /// are treated as already normalized and will not have their definition
+    /// scripts or hashes altered on load, which prevents double-normalization
+    /// from drifting hashes away from the file-side pipeline.
+    /// </summary>
+    private void NormalizeLegacyObjectsIfNeeded(SchemaSnapshot snapshot)
+    {
+        if (snapshot is null)
+        {
+            return;
+        }
 
-	        // If the snapshot has already been normalized with the current
-	        // pipeline version, there's nothing to do.
-	        if (snapshot.NormalizationVersion >= SchemaSnapshot.CurrentNormalizationVersion)
-	        {
-	            return;
-	        }
+        // If the snapshot has already been normalized with the current
+        // pipeline version, there's nothing to do.
+        if (snapshot.NormalizationVersion >= SchemaSnapshot.CurrentNormalizationVersion)
+        {
+            return;
+        }
 
-	        NormalizeLegacyObjects(snapshot);
-	        snapshot.NormalizationVersion = SchemaSnapshot.CurrentNormalizationVersion;
-	        _context.SchemaSnapshots.Update(snapshot);
-	    }
+        NormalizeLegacyObjects(snapshot);
+        snapshot.NormalizationVersion = SchemaSnapshot.CurrentNormalizationVersion;
+        _context.SchemaSnapshots.Update(snapshot);
+    }
 
-	    /// <summary>
-	    /// Normalizes legacy objects where the schema was embedded in ObjectName.
-	    /// Legacy format: SchemaName = "", ObjectName = "dbo.fn_GetDashboardInfo"
-	    /// New format: SchemaName = "dbo", ObjectName = "fn_GetDashboardInfo"
-	    /// Also handles hybrid format where both SchemaName and schema-qualified ObjectName are present.
-	    /// In addition to normalizing names and removing duplicate function entries, this also
-	    /// re-normalizes definition scripts and recomputes per-object hashes so that snapshots
-	    /// created with older comparison logic are brought up-to-date.
-	    /// </summary>
+    /// <summary>
+    /// Normalizes legacy objects where the schema was embedded in ObjectName.
+    /// Legacy format: SchemaName = "", ObjectName = "dbo.fn_GetDashboardInfo"
+    /// New format: SchemaName = "dbo", ObjectName = "fn_GetDashboardInfo"
+    /// Also handles hybrid format where both SchemaName and schema-qualified ObjectName are present.
+    /// In addition to normalizing names and removing duplicate function entries, this also
+    /// re-normalizes definition scripts and recomputes per-object hashes so that snapshots
+    /// created with older comparison logic are brought up-to-date.
+    /// </summary>
     private static void NormalizeLegacyObjects(SchemaSnapshot snapshot)
     {
         if (snapshot.Objects is null || snapshot.Objects.Count == 0)

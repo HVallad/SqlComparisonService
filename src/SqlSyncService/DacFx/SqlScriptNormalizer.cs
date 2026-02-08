@@ -23,7 +23,7 @@ internal static class SqlScriptNormalizer
             .Replace("\r\n", "\n")
             .Replace("\r", "\n");
 
-	        var lines = normalized.Split('\n');
+        var lines = normalized.Split('\n');
 
         // Trim leading blank/whitespace-only lines
         var start = 0;
@@ -142,33 +142,33 @@ internal static class SqlScriptNormalizer
                 }
             }
 
-	            lines[i] = builder.ToString();
-	        }
+            lines[i] = builder.ToString();
+        }
 
-	        var result = string.Join("\n", lines);
-	        // Apply the same temporal trailing-comma normalization used in
-	        // StripInlineConstraints, so that callers which only use
-	        // NormalizeForComparison (or which pass through additional
-	        // transformations) still get consistent handling of
-	        // "final column + PERIOD FOR SYSTEM_TIME" patterns.
-	        result = NormalizeTrailingCommaBeforePeriodForSystemTime(result);
+        var result = string.Join("\n", lines);
+        // Apply the same temporal trailing-comma normalization used in
+        // StripInlineConstraints, so that callers which only use
+        // NormalizeForComparison (or which pass through additional
+        // transformations) still get consistent handling of
+        // "final column + PERIOD FOR SYSTEM_TIME" patterns.
+        result = NormalizeTrailingCommaBeforePeriodForSystemTime(result);
 
-	        // Canonicalize whitespace immediately before parentheses so that
-	        // type declarations like "TIME (0)" and "TIME(0)" compare equal
-	        // and to reduce noise from stylistic formatting differences.
-	        result = NormalizeSpacesBeforeParentheses(result);
+        // Canonicalize whitespace immediately before parentheses so that
+        // type declarations like "TIME (0)" and "TIME(0)" compare equal
+        // and to reduce noise from stylistic formatting differences.
+        result = NormalizeSpacesBeforeParentheses(result);
 
-	        // Treat DATETIME2 and DATETIME2(7) as equivalent, since SQL Server
-	        // uses a default precision of 7 when none is specified. This
-	        // ensures that database scripts which emit "DATETIME2" and file
-	        // scripts which use "DATETIME2 (7)" normalize to the same form.
-	        result = NormalizeDateTime2DefaultPrecision(result);
+        // Treat DATETIME2 and DATETIME2(7) as equivalent, since SQL Server
+        // uses a default precision of 7 when none is specified. This
+        // ensures that database scripts which emit "DATETIME2" and file
+        // scripts which use "DATETIME2 (7)" normalize to the same form.
+        result = NormalizeDateTime2DefaultPrecision(result);
 
-	        // Treat FLOAT and FLOAT(53) as equivalent, since SQL Server uses
-	        // a default precision of 53 when none is specified. This ensures
-	        // that database scripts which emit "FLOAT" and file scripts which
-	        // use "FLOAT(53)" normalize to the same form.
-	        result = NormalizeFloatDefaultPrecision(result);
+        // Treat FLOAT and FLOAT(53) as equivalent, since SQL Server uses
+        // a default precision of 53 when none is specified. This ensures
+        // that database scripts which emit "FLOAT" and file scripts which
+        // use "FLOAT(53)" normalize to the same form.
+        result = NormalizeFloatDefaultPrecision(result);
 
         // Treat DECIMAL(p) and DECIMAL(p, 0) as equivalent, since SQL Server
         // uses a default scale of 0 when none is specified. The same applies
@@ -193,25 +193,25 @@ internal static class SqlScriptNormalizer
         // This normalizes "...[Col] TYPE NULL\n)" to "...[Col] TYPE NULL)".
         result = NormalizeNewlinesBeforeClosingParen(result);
 
-	        // Canonicalize insignificant whitespace immediately after commas so
-	        // that constructs like "NUMERIC(18,3)" and "NUMERIC(18, 3)" or
-	        // "IDENTITY(1,1)" and "IDENTITY(1, 1)" normalize to the same form.
-	        // This is applied after other type-specific normalizations so that
-	        // we do not interfere with more targeted logic.
-	        result = NormalizeSpacesAfterCommas(result);
+        // Canonicalize insignificant whitespace immediately after commas so
+        // that constructs like "NUMERIC(18,3)" and "NUMERIC(18, 3)" or
+        // "IDENTITY(1,1)" and "IDENTITY(1, 1)" normalize to the same form.
+        // This is applied after other type-specific normalizations so that
+        // we do not interfere with more targeted logic.
+        result = NormalizeSpacesAfterCommas(result);
 
-	        // Strip a trailing semicolon at the end of the script so
-	        // that scripts which differ only by an optional terminal
-	        // semicolon compare equal while preserving inner semicolons.
-	        // This must run BEFORE NormalizeWithClauseOptions because
-	        // that method checks whether the WITH clause is at the end
-	        // of the script.
-	        result = TrimTrailingSemicolon(result);
+        // Strip a trailing semicolon at the end of the script so
+        // that scripts which differ only by an optional terminal
+        // semicolon compare equal while preserving inner semicolons.
+        // This must run BEFORE NormalizeWithClauseOptions because
+        // that method checks whether the WITH clause is at the end
+        // of the script.
+        result = TrimTrailingSemicolon(result);
 
-		        // Canonicalize WITH clause options to a consistent order so that
-		        // "WITH(DURABILITY = SCHEMA_ONLY, MEMORY_OPTIMIZED = ON)" and
-		        // "WITH (MEMORY_OPTIMIZED = ON, DURABILITY = SCHEMA_ONLY)" compare equal.
-		        result = NormalizeWithClauseOptions(result);
+        // Canonicalize WITH clause options to a consistent order so that
+        // "WITH(DURABILITY = SCHEMA_ONLY, MEMORY_OPTIMIZED = ON)" and
+        // "WITH (MEMORY_OPTIMIZED = ON, DURABILITY = SCHEMA_ONLY)" compare equal.
+        result = NormalizeWithClauseOptions(result);
 
         // Normalize temporal column definitions by removing the HIDDEN keyword.
         // File scripts may have "GENERATED ALWAYS AS ROW START HIDDEN NOT NULL"
@@ -236,7 +236,7 @@ internal static class SqlScriptNormalizer
         // database generates just "CREATE ROLE [name]".
         result = NormalizeCreateRoleSyntax(result);
 
-	        return result;
+        return result;
     }
 
     /// <summary>
@@ -633,146 +633,146 @@ internal static class SqlScriptNormalizer
         return string.Join("\n", lines);
     }
 
-        /// <summary>
-        /// Normalizes away insignificant whitespace immediately before opening
-        /// parentheses when there is a non-whitespace character directly
-        /// before the space. This turns "DATETIME2 (7)" into "DATETIME2(7)"
-        /// and "TIME (0)" into "TIME(0)", while preserving indentation and
-        /// spacing elsewhere.
-        /// </summary>
-        private static string NormalizeSpacesBeforeParentheses(string script)
+    /// <summary>
+    /// Normalizes away insignificant whitespace immediately before opening
+    /// parentheses when there is a non-whitespace character directly
+    /// before the space. This turns "DATETIME2 (7)" into "DATETIME2(7)"
+    /// and "TIME (0)" into "TIME(0)", while preserving indentation and
+    /// spacing elsewhere.
+    /// </summary>
+    private static string NormalizeSpacesBeforeParentheses(string script)
+    {
+        if (string.IsNullOrEmpty(script))
         {
-            if (string.IsNullOrEmpty(script))
-            {
-                return script;
-            }
-
-            return Regex.Replace(script, @"(?<=\S)\s+\(", "(", RegexOptions.Multiline);
+            return script;
         }
 
-        /// <summary>
-        /// Canonicalizes DATETIME2 declarations so that bare DATETIME2 and
-        /// DATETIME2(7) (with any amount of whitespace) normalize to the same
-        /// representation. This reflects SQL Server's default precision of 7
-        /// for DATETIME2 and avoids spurious differences when one side omits
-        /// the precision while the other spells it out as (7).
-        ///
-        /// Other precisions such as DATETIME2(3) remain distinct and continue
-        /// to be treated as real changes.
-        /// </summary>
-	    private static string NormalizeDateTime2DefaultPrecision(string script)
-	    {
-	        if (string.IsNullOrEmpty(script))
-	        {
-	            return script;
-	        }
+        return Regex.Replace(script, @"(?<=\S)\s+\(", "(", RegexOptions.Multiline);
+    }
 
-	        // Normalize DATETIME2 declarations so that bare DATETIME2 and
-	        // DATETIME2(7) (with any whitespace) both become DATETIME2(7),
-	        // while preserving other explicit precisions such as
-	        // DATETIME2(3).
-	        script = Regex.Replace(
-	            script,
-	            @"\bDATETIME2\b(?:\s*\(\s*(\d+)\s*\))?",
-	            match =>
-	            {
-	                var precisionGroup = match.Groups[1];
-	                var precisionText = precisionGroup.Success ? precisionGroup.Value : string.Empty;
+    /// <summary>
+    /// Canonicalizes DATETIME2 declarations so that bare DATETIME2 and
+    /// DATETIME2(7) (with any amount of whitespace) normalize to the same
+    /// representation. This reflects SQL Server's default precision of 7
+    /// for DATETIME2 and avoids spurious differences when one side omits
+    /// the precision while the other spells it out as (7).
+    ///
+    /// Other precisions such as DATETIME2(3) remain distinct and continue
+    /// to be treated as real changes.
+    /// </summary>
+    private static string NormalizeDateTime2DefaultPrecision(string script)
+    {
+        if (string.IsNullOrEmpty(script))
+        {
+            return script;
+        }
 
-	                if (string.IsNullOrEmpty(precisionText) || precisionText == "7")
-	                {
-	                    return "DATETIME2(7)";
-	                }
+        // Normalize DATETIME2 declarations so that bare DATETIME2 and
+        // DATETIME2(7) (with any whitespace) both become DATETIME2(7),
+        // while preserving other explicit precisions such as
+        // DATETIME2(3).
+        script = Regex.Replace(
+            script,
+            @"\bDATETIME2\b(?:\s*\(\s*(\d+)\s*\))?",
+            match =>
+            {
+                var precisionGroup = match.Groups[1];
+                var precisionText = precisionGroup.Success ? precisionGroup.Value : string.Empty;
 
-	                // For non-default precisions, keep the original text so
-	                // that real differences (e.g., DATETIME2(3) vs
-	                // DATETIME2(7)) are still detected.
-	                return match.Value;
-	            },
-	            RegexOptions.IgnoreCase);
+                if (string.IsNullOrEmpty(precisionText) || precisionText == "7")
+                {
+                    return "DATETIME2(7)";
+                }
 
-	        return script;
-	    }
+                // For non-default precisions, keep the original text so
+                // that real differences (e.g., DATETIME2(3) vs
+                // DATETIME2(7)) are still detected.
+                return match.Value;
+            },
+            RegexOptions.IgnoreCase);
 
-	    /// <summary>
-	    /// Normalizes FLOAT declarations so that bare FLOAT and FLOAT(53) both
-	    /// become FLOAT(53), since SQL Server uses 53 as the default precision.
-	    /// This ensures that database scripts which emit "FLOAT" and file scripts
-	    /// which use "FLOAT(53)" normalize to the same form.
-	    ///
-	    /// Other precisions such as FLOAT(24) remain distinct and continue to be
-	    /// treated as real changes.
-	    /// </summary>
-	    private static string NormalizeFloatDefaultPrecision(string script)
-	    {
-	        if (string.IsNullOrEmpty(script))
-	        {
-	            return script;
-	        }
+        return script;
+    }
 
-	        // Normalize FLOAT declarations so that bare FLOAT and FLOAT(53)
-	        // (with any whitespace) both become FLOAT(53), while preserving
-	        // other explicit precisions such as FLOAT(24).
-	        script = Regex.Replace(
-	            script,
-	            @"\bFLOAT\b(?:\s*\(\s*(\d+)\s*\))?",
-	            match =>
-	            {
-	                var precisionGroup = match.Groups[1];
-	                var precisionText = precisionGroup.Success ? precisionGroup.Value : string.Empty;
+    /// <summary>
+    /// Normalizes FLOAT declarations so that bare FLOAT and FLOAT(53) both
+    /// become FLOAT(53), since SQL Server uses 53 as the default precision.
+    /// This ensures that database scripts which emit "FLOAT" and file scripts
+    /// which use "FLOAT(53)" normalize to the same form.
+    ///
+    /// Other precisions such as FLOAT(24) remain distinct and continue to be
+    /// treated as real changes.
+    /// </summary>
+    private static string NormalizeFloatDefaultPrecision(string script)
+    {
+        if (string.IsNullOrEmpty(script))
+        {
+            return script;
+        }
 
-	                if (string.IsNullOrEmpty(precisionText) || precisionText == "53")
-	                {
-	                    return "FLOAT(53)";
-	                }
+        // Normalize FLOAT declarations so that bare FLOAT and FLOAT(53)
+        // (with any whitespace) both become FLOAT(53), while preserving
+        // other explicit precisions such as FLOAT(24).
+        script = Regex.Replace(
+            script,
+            @"\bFLOAT\b(?:\s*\(\s*(\d+)\s*\))?",
+            match =>
+            {
+                var precisionGroup = match.Groups[1];
+                var precisionText = precisionGroup.Success ? precisionGroup.Value : string.Empty;
 
-	                // For non-default precisions, keep the original text so
-	                // that real differences (e.g., FLOAT(24) vs FLOAT(53))
-	                // are still detected.
-	                return match.Value;
-	            },
-	            RegexOptions.IgnoreCase);
+                if (string.IsNullOrEmpty(precisionText) || precisionText == "53")
+                {
+                    return "FLOAT(53)";
+                }
 
-	        return script;
-	    }
+                // For non-default precisions, keep the original text so
+                // that real differences (e.g., FLOAT(24) vs FLOAT(53))
+                // are still detected.
+                return match.Value;
+            },
+            RegexOptions.IgnoreCase);
 
-	    /// <summary>
-	    /// Normalizes DECIMAL and NUMERIC type declarations so that bare
-	    /// DECIMAL(p) and DECIMAL(p, 0) both become DECIMAL(p, 0). SQL Server
-	    /// uses a default scale of 0 when none is specified, so these forms
-	    /// are semantically equivalent. This ensures that database scripts
-	    /// which emit "DECIMAL(19, 0)" and file scripts which use "DECIMAL(19)"
-	    /// normalize to the same form.
-	    ///
-	    /// Explicit scales other than 0 remain distinct.
-	    /// </summary>
-	    private static string NormalizeDecimalDefaultScale(string script)
-	    {
-	        if (string.IsNullOrEmpty(script))
-	        {
-	            return script;
-	        }
+        return script;
+    }
 
-	        // Match DECIMAL(p) or DECIMAL(p, 0) or DECIMAL(p, s) where s != 0
-	        // and NUMERIC(p) or NUMERIC(p, 0) or NUMERIC(p, s) where s != 0
-	        // We normalize DECIMAL(p) to DECIMAL(p, 0) and NUMERIC(p) to NUMERIC(p, 0)
-	        script = Regex.Replace(
-	            script,
-	            @"\b(DECIMAL|NUMERIC)\s*\(\s*(\d+)\s*(?:,\s*(\d+)\s*)?\)",
-	            match =>
-	            {
-	                var typeName = match.Groups[1].Value.ToUpperInvariant();
-	                var precision = match.Groups[2].Value;
-	                var scaleGroup = match.Groups[3];
-	                var scale = scaleGroup.Success ? scaleGroup.Value : "0";
+    /// <summary>
+    /// Normalizes DECIMAL and NUMERIC type declarations so that bare
+    /// DECIMAL(p) and DECIMAL(p, 0) both become DECIMAL(p, 0). SQL Server
+    /// uses a default scale of 0 when none is specified, so these forms
+    /// are semantically equivalent. This ensures that database scripts
+    /// which emit "DECIMAL(19, 0)" and file scripts which use "DECIMAL(19)"
+    /// normalize to the same form.
+    ///
+    /// Explicit scales other than 0 remain distinct.
+    /// </summary>
+    private static string NormalizeDecimalDefaultScale(string script)
+    {
+        if (string.IsNullOrEmpty(script))
+        {
+            return script;
+        }
 
-	                // Normalize to the explicit form with scale
-	                return $"{typeName}({precision}, {scale})";
-	            },
-	            RegexOptions.IgnoreCase);
+        // Match DECIMAL(p) or DECIMAL(p, 0) or DECIMAL(p, s) where s != 0
+        // and NUMERIC(p) or NUMERIC(p, 0) or NUMERIC(p, s) where s != 0
+        // We normalize DECIMAL(p) to DECIMAL(p, 0) and NUMERIC(p) to NUMERIC(p, 0)
+        script = Regex.Replace(
+            script,
+            @"\b(DECIMAL|NUMERIC)\s*\(\s*(\d+)\s*(?:,\s*(\d+)\s*)?\)",
+            match =>
+            {
+                var typeName = match.Groups[1].Value.ToUpperInvariant();
+                var precision = match.Groups[2].Value;
+                var scaleGroup = match.Groups[3];
+                var scale = scaleGroup.Success ? scaleGroup.Value : "0";
 
-	        return script;
-	    }
+                // Normalize to the explicit form with scale
+                return $"{typeName}({precision}, {scale})";
+            },
+            RegexOptions.IgnoreCase);
+
+        return script;
+    }
 
     /// <summary>
     /// Normalizes TIME type declarations so that bare TIME and TIME(7) both
@@ -974,144 +974,144 @@ internal static class SqlScriptNormalizer
 
     /// <summary>
     /// Normalizes away insignificant whitespace immediately after commas in
-	    /// SQL tokens, while avoiding changes inside string literals and
-	    /// bracketed identifiers. This turns "NUMERIC(18,3)" and
-	    /// "NUMERIC(18, 3)" into the same representation and likewise for
-	    /// IDENTITY seeds/increments such as "IDENTITY(1,1)" vs
-	    /// "IDENTITY(1, 1)".
-	    /// </summary>
-	    private static string NormalizeSpacesAfterCommas(string script)
-	    {
-	        if (string.IsNullOrEmpty(script))
-	        {
-	            return script;
-	        }
+    /// SQL tokens, while avoiding changes inside string literals and
+    /// bracketed identifiers. This turns "NUMERIC(18,3)" and
+    /// "NUMERIC(18, 3)" into the same representation and likewise for
+    /// IDENTITY seeds/increments such as "IDENTITY(1,1)" vs
+    /// "IDENTITY(1, 1)".
+    /// </summary>
+    private static string NormalizeSpacesAfterCommas(string script)
+    {
+        if (string.IsNullOrEmpty(script))
+        {
+            return script;
+        }
 
-	        var builder = new StringBuilder(script.Length);
-	        var inSingleQuote = false;
-	        var inBracket = false;
+        var builder = new StringBuilder(script.Length);
+        var inSingleQuote = false;
+        var inBracket = false;
 
-	        for (var i = 0; i < script.Length; i++)
-	        {
-	            var ch = script[i];
+        for (var i = 0; i < script.Length; i++)
+        {
+            var ch = script[i];
 
-	            // Track simple single-quoted string literals so that we do not
-	            // alter commas/spaces inside them. Handle escaped '' sequences
-	            // by keeping them inside the string.
-	            if (!inBracket && ch == '\'')
-	            {
-	                if (inSingleQuote)
-	                {
-	                    if (i + 1 < script.Length && script[i + 1] == '\'')
-	                    {
-	                        builder.Append("''");
-	                        i++;
-	                        continue;
-	                    }
+            // Track simple single-quoted string literals so that we do not
+            // alter commas/spaces inside them. Handle escaped '' sequences
+            // by keeping them inside the string.
+            if (!inBracket && ch == '\'')
+            {
+                if (inSingleQuote)
+                {
+                    if (i + 1 < script.Length && script[i + 1] == '\'')
+                    {
+                        builder.Append("''");
+                        i++;
+                        continue;
+                    }
 
-	                    inSingleQuote = false;
-	                    builder.Append(ch);
-	                    continue;
-	                }
+                    inSingleQuote = false;
+                    builder.Append(ch);
+                    continue;
+                }
 
-	                inSingleQuote = true;
-	                builder.Append(ch);
-	                continue;
-	            }
+                inSingleQuote = true;
+                builder.Append(ch);
+                continue;
+            }
 
-	            // Track bracketed identifiers like [Name, With, Commas] so that
-	            // we likewise avoid altering their contents.
-	            if (!inSingleQuote)
-	            {
-	                if (ch == '[')
-	                {
-	                    inBracket = true;
-	                    builder.Append(ch);
-	                    continue;
-	                }
+            // Track bracketed identifiers like [Name, With, Commas] so that
+            // we likewise avoid altering their contents.
+            if (!inSingleQuote)
+            {
+                if (ch == '[')
+                {
+                    inBracket = true;
+                    builder.Append(ch);
+                    continue;
+                }
 
-	                if (ch == ']' && inBracket)
-	                {
-	                    inBracket = false;
-	                    builder.Append(ch);
-	                    continue;
-	                }
-	            }
+                if (ch == ']' && inBracket)
+                {
+                    inBracket = false;
+                    builder.Append(ch);
+                    continue;
+                }
+            }
 
-	            if (!inSingleQuote && !inBracket && ch == ',')
-	            {
-	                builder.Append(',');
-	                var j = i + 1;
+            if (!inSingleQuote && !inBracket && ch == ',')
+            {
+                builder.Append(',');
+                var j = i + 1;
 
-	                // Skip any spaces or tabs immediately following the comma,
-	                // but leave newlines and other whitespace intact.
-	                while (j < script.Length && (script[j] == ' ' || script[j] == '\t'))
-	                {
-	                    j++;
-	                }
+                // Skip any spaces or tabs immediately following the comma,
+                // but leave newlines and other whitespace intact.
+                while (j < script.Length && (script[j] == ' ' || script[j] == '\t'))
+                {
+                    j++;
+                }
 
-	                // If the next non-space character is not a newline, carriage
-	                // return, or closing parenthesis, insert a single space to
-	                // canonicalize the separation.
-	                if (j < script.Length && script[j] != '\n' && script[j] != '\r' && script[j] != ')')
-	                {
-	                    builder.Append(' ');
-	                }
+                // If the next non-space character is not a newline, carriage
+                // return, or closing parenthesis, insert a single space to
+                // canonicalize the separation.
+                if (j < script.Length && script[j] != '\n' && script[j] != '\r' && script[j] != ')')
+                {
+                    builder.Append(' ');
+                }
 
-	                i = j - 1;
-	                continue;
-	            }
+                i = j - 1;
+                continue;
+            }
 
-	            builder.Append(ch);
-	        }
+            builder.Append(ch);
+        }
 
-	        return builder.ToString();
-	    }
+        return builder.ToString();
+    }
 
-	    /// <summary>
-	    /// Removes a single optional semicolon at the very end of the script
-	    /// while leaving all inner semicolons intact. This allows scripts that
-	    /// differ only by a trailing semicolon on the final statement to
-	    /// compare equal.
-	    /// </summary>
-	    private static string TrimTrailingSemicolon(string script)
-	    {
-	        if (string.IsNullOrWhiteSpace(script))
-	        {
-	            return script;
-	        }
-	
-	        var end = script.Length - 1;
-	        while (end >= 0 && char.IsWhiteSpace(script[end]))
-	        {
-	            end--;
-	        }
-	
-	        if (end >= 0 && script[end] == ';')
-	        {
-	            return script[..end];
-	        }
-	
-	        return script;
-	    }
+    /// <summary>
+    /// Removes a single optional semicolon at the very end of the script
+    /// while leaving all inner semicolons intact. This allows scripts that
+    /// differ only by a trailing semicolon on the final statement to
+    /// compare equal.
+    /// </summary>
+    private static string TrimTrailingSemicolon(string script)
+    {
+        if (string.IsNullOrWhiteSpace(script))
+        {
+            return script;
+        }
 
-	/// <summary>
-	/// Strips column-level inline constraint/default segments from a single
-	/// column definition line. This is a heuristic intended to handle common
-	/// patterns such as temporal table default constraints, e.g.:
-	///
-	///   [ValidFrom] DATETIME2 (7) GENERATED ALWAYS AS ROW START
-	///       CONSTRAINT [DF_ValidFrom] DEFAULT (sysutcdatetime()) NOT NULL,
-	///
-	/// and turns it into:
-	///
-	///   [ValidFrom] DATETIME2 (7) GENERATED ALWAYS AS ROW START NOT NULL,
-	///
-	/// preserving the column definition and nullability while removing the
-	/// named default constraint.
-	/// </summary>
-	private static string StripColumnLevelConstraint(string line)
-	{
+        var end = script.Length - 1;
+        while (end >= 0 && char.IsWhiteSpace(script[end]))
+        {
+            end--;
+        }
+
+        if (end >= 0 && script[end] == ';')
+        {
+            return script[..end];
+        }
+
+        return script;
+    }
+
+    /// <summary>
+    /// Strips column-level inline constraint/default segments from a single
+    /// column definition line. This is a heuristic intended to handle common
+    /// patterns such as temporal table default constraints, e.g.:
+    ///
+    ///   [ValidFrom] DATETIME2 (7) GENERATED ALWAYS AS ROW START
+    ///       CONSTRAINT [DF_ValidFrom] DEFAULT (sysutcdatetime()) NOT NULL,
+    ///
+    /// and turns it into:
+    ///
+    ///   [ValidFrom] DATETIME2 (7) GENERATED ALWAYS AS ROW START NOT NULL,
+    ///
+    /// preserving the column definition and nullability while removing the
+    /// named default constraint.
+    /// </summary>
+    private static string StripColumnLevelConstraint(string line)
+    {
         if (string.IsNullOrWhiteSpace(line))
         {
             return line;

@@ -65,18 +65,18 @@ public class DatabaseModelBuilder : IDatabaseModelBuilder
         var objectsList = objects.ToList();
         var hash = ComputeSchemaHash(objectsList);
 
-	        var snapshot = new SchemaSnapshot
-	        {
-	            SubscriptionId = subscriptionId,
-	            CapturedAt = DateTime.UtcNow,
-	            DatabaseVersion = connection.Database,
-	            // New snapshots are created with the current normalization
-	            // pipeline version so that repository logic can avoid
-	            // double-normalizing definitions on load.
-	            NormalizationVersion = SchemaSnapshot.CurrentNormalizationVersion,
-	            Hash = hash,
-	            Objects = objectsList
-	        };
+        var snapshot = new SchemaSnapshot
+        {
+            SubscriptionId = subscriptionId,
+            CapturedAt = DateTime.UtcNow,
+            DatabaseVersion = connection.Database,
+            // New snapshots are created with the current normalization
+            // pipeline version so that repository logic can avoid
+            // double-normalizing definitions on load.
+            NormalizationVersion = SchemaSnapshot.CurrentNormalizationVersion,
+            Hash = hash,
+            Objects = objectsList
+        };
 
         // Logins are server-level principals. We load them separately.
         // Skip loading logins if we're filtering for a specific object type

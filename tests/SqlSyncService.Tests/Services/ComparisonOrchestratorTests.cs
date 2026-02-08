@@ -328,19 +328,19 @@ public class ComparisonOrchestratorTests
             var snapshot = Snapshots.FirstOrDefault(s => s.Id == snapshotId);
             if (snapshot is null) return Task.CompletedTask;
 
-	            foreach (var obj in updatedObjects)
-	            {
-	                var searchType = NormalizeFunctionType(obj.ObjectType);
-	                var existingIndex = snapshot.Objects.FindIndex(o =>
-	                    NormalizeFunctionType(o.ObjectType) == searchType &&
-	                    string.Equals(o.SchemaName, obj.SchemaName, StringComparison.OrdinalIgnoreCase) &&
-	                    string.Equals(o.ObjectName, obj.ObjectName, StringComparison.OrdinalIgnoreCase));
-	                if (existingIndex >= 0)
-	                {
-	                    snapshot.Objects.RemoveAt(existingIndex);
-	                }
-	                snapshot.Objects.Add(obj);
-	            }
+            foreach (var obj in updatedObjects)
+            {
+                var searchType = NormalizeFunctionType(obj.ObjectType);
+                var existingIndex = snapshot.Objects.FindIndex(o =>
+                    NormalizeFunctionType(o.ObjectType) == searchType &&
+                    string.Equals(o.SchemaName, obj.SchemaName, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(o.ObjectName, obj.ObjectName, StringComparison.OrdinalIgnoreCase));
+                if (existingIndex >= 0)
+                {
+                    snapshot.Objects.RemoveAt(existingIndex);
+                }
+                snapshot.Objects.Add(obj);
+            }
             return Task.CompletedTask;
         }
 
@@ -349,22 +349,22 @@ public class ComparisonOrchestratorTests
             var snapshot = Snapshots.FirstOrDefault(s => s.Id == snapshotId);
             if (snapshot is null) return Task.CompletedTask;
 
-	            var searchType = NormalizeFunctionType(objectType);
-	            snapshot.Objects.RemoveAll(o =>
-	                NormalizeFunctionType(o.ObjectType) == searchType &&
-	                string.Equals(o.SchemaName, schemaName, StringComparison.OrdinalIgnoreCase) &&
-	                string.Equals(o.ObjectName, objectName, StringComparison.OrdinalIgnoreCase));
+            var searchType = NormalizeFunctionType(objectType);
+            snapshot.Objects.RemoveAll(o =>
+                NormalizeFunctionType(o.ObjectType) == searchType &&
+                string.Equals(o.SchemaName, schemaName, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(o.ObjectName, objectName, StringComparison.OrdinalIgnoreCase));
             return Task.CompletedTask;
         }
 
-	        private static SqlObjectType NormalizeFunctionType(SqlObjectType type)
-	        {
-	            return type == SqlObjectType.ScalarFunction ||
-	                   type == SqlObjectType.TableValuedFunction ||
-	                   type == SqlObjectType.InlineTableValuedFunction
-	                ? SqlObjectType.ScalarFunction
-	                : type;
-	        }
+        private static SqlObjectType NormalizeFunctionType(SqlObjectType type)
+        {
+            return type == SqlObjectType.ScalarFunction ||
+                   type == SqlObjectType.TableValuedFunction ||
+                   type == SqlObjectType.InlineTableValuedFunction
+                ? SqlObjectType.ScalarFunction
+                : type;
+        }
 
         public Task UpdateAsync(SchemaSnapshot snapshot, CancellationToken cancellationToken = default)
         {
@@ -502,33 +502,33 @@ public class ComparisonOrchestratorTests
             Options = new ComparisonOptions()
         };
 
-	        var subscriptions = new InMemorySubscriptionRepository { Subscription = subscription };
-	        var snapshots = new InMemorySchemaSnapshotRepository();
-	        var history = new InMemoryComparisonHistoryRepository();
-	
-	        var dbObject = new SchemaObjectSummary
-	        {
-	            SchemaName = "dbo",
-	            ObjectName = "TestProc",
-	            ObjectType = SqlObjectType.StoredProcedure,
-	            DefinitionHash = "ABC123",
-	            DefinitionScript = "CREATE PROCEDURE [dbo].[TestProc] AS SELECT 1"
-	        };
-	
-	        var dbBuilder = new StubDatabaseModelBuilder
-	        {
-	            SnapshotToReturn = new SchemaSnapshot
-	            {
-	                SubscriptionId = subscriptionId,
-	                Objects = new List<SchemaObjectSummary> { dbObject }
-	            }
-	        };
-	
-	        var schemaReader = new StubDatabaseSchemaReader
-	        {
-	            ObjectsToReturn = new[] { dbObject }
-	        };
-	
+        var subscriptions = new InMemorySubscriptionRepository { Subscription = subscription };
+        var snapshots = new InMemorySchemaSnapshotRepository();
+        var history = new InMemoryComparisonHistoryRepository();
+
+        var dbObject = new SchemaObjectSummary
+        {
+            SchemaName = "dbo",
+            ObjectName = "TestProc",
+            ObjectType = SqlObjectType.StoredProcedure,
+            DefinitionHash = "ABC123",
+            DefinitionScript = "CREATE PROCEDURE [dbo].[TestProc] AS SELECT 1"
+        };
+
+        var dbBuilder = new StubDatabaseModelBuilder
+        {
+            SnapshotToReturn = new SchemaSnapshot
+            {
+                SubscriptionId = subscriptionId,
+                Objects = new List<SchemaObjectSummary> { dbObject }
+            }
+        };
+
+        var schemaReader = new StubDatabaseSchemaReader
+        {
+            ObjectsToReturn = new[] { dbObject }
+        };
+
         var fileBuilder = new StubFileModelBuilder
         {
             CacheToReturn = new FileModelCache
@@ -546,10 +546,10 @@ public class ComparisonOrchestratorTests
                     }
                 }
             }
-	        };
-	
-	        var orchestrator = new ComparisonOrchestrator(
-	            subscriptions, snapshots, history, dbBuilder, schemaReader, fileBuilder, new StubSchemaComparer(), CreateOptions(1), NullLogger<ComparisonOrchestrator>.Instance);
+        };
+
+        var orchestrator = new ComparisonOrchestrator(
+            subscriptions, snapshots, history, dbBuilder, schemaReader, fileBuilder, new StubSchemaComparer(), CreateOptions(1), NullLogger<ComparisonOrchestrator>.Instance);
 
         // Act
         var result = await orchestrator.CompareObjectAsync(
@@ -562,109 +562,109 @@ public class ComparisonOrchestratorTests
         Assert.Null(result.Difference);
     }
 
-	    [Fact]
-	    public async Task CompareObjectAsync_Persists_Full_Summary_For_Subscription()
-	    {
-	        // Arrange
-	        var subscriptionId = Guid.NewGuid();
-	        var subscription = new Subscription
-	        {
-	            Id = subscriptionId,
-	            Name = "Test",
-	            Database = new DatabaseConnection { Database = "Db" },
-	            Project = new ProjectFolder { RootPath = "." },
-	            Options = new ComparisonOptions()
-	        };
+    [Fact]
+    public async Task CompareObjectAsync_Persists_Full_Summary_For_Subscription()
+    {
+        // Arrange
+        var subscriptionId = Guid.NewGuid();
+        var subscription = new Subscription
+        {
+            Id = subscriptionId,
+            Name = "Test",
+            Database = new DatabaseConnection { Database = "Db" },
+            Project = new ProjectFolder { RootPath = "." },
+            Options = new ComparisonOptions()
+        };
 
-	        var subscriptions = new InMemorySubscriptionRepository { Subscription = subscription };
-	        var snapshots = new InMemorySchemaSnapshotRepository();
-	        var history = new InMemoryComparisonHistoryRepository();
+        var subscriptions = new InMemorySubscriptionRepository { Subscription = subscription };
+        var snapshots = new InMemorySchemaSnapshotRepository();
+        var history = new InMemoryComparisonHistoryRepository();
 
-	        var users = new SchemaObjectSummary
-	        {
-	            SchemaName = "dbo",
-	            ObjectName = "Users",
-	            ObjectType = SqlObjectType.Table,
-	            DefinitionHash = "HASH_USERS",
-	            DefinitionScript = "CREATE TABLE [dbo].[Users] (Id int)"
-	        };
+        var users = new SchemaObjectSummary
+        {
+            SchemaName = "dbo",
+            ObjectName = "Users",
+            ObjectType = SqlObjectType.Table,
+            DefinitionHash = "HASH_USERS",
+            DefinitionScript = "CREATE TABLE [dbo].[Users] (Id int)"
+        };
 
-	        var orders = new SchemaObjectSummary
-	        {
-	            SchemaName = "dbo",
-	            ObjectName = "Orders",
-	            ObjectType = SqlObjectType.Table,
-	            DefinitionHash = "HASH_ORDERS",
-	            DefinitionScript = "CREATE TABLE [dbo].[Orders] (Id int)"
-	        };
+        var orders = new SchemaObjectSummary
+        {
+            SchemaName = "dbo",
+            ObjectName = "Orders",
+            ObjectType = SqlObjectType.Table,
+            DefinitionHash = "HASH_ORDERS",
+            DefinitionScript = "CREATE TABLE [dbo].[Orders] (Id int)"
+        };
 
-	        var dbBuilder = new StubDatabaseModelBuilder
-	        {
-	            SnapshotToReturn = new SchemaSnapshot
-	            {
-	                SubscriptionId = subscriptionId,
-	                Objects = new List<SchemaObjectSummary> { users, orders }
-	            }
-	        };
+        var dbBuilder = new StubDatabaseModelBuilder
+        {
+            SnapshotToReturn = new SchemaSnapshot
+            {
+                SubscriptionId = subscriptionId,
+                Objects = new List<SchemaObjectSummary> { users, orders }
+            }
+        };
 
-	        var schemaReader = new StubDatabaseSchemaReader
-	        {
-	            ObjectsToReturn = new[] { users, orders }
-	        };
+        var schemaReader = new StubDatabaseSchemaReader
+        {
+            ObjectsToReturn = new[] { users, orders }
+        };
 
-	        var fileBuilder = new StubFileModelBuilder
-	        {
-	            CacheToReturn = new FileModelCache
-	            {
-	                SubscriptionId = subscriptionId,
-	                FileEntries = new Dictionary<string, FileObjectEntry>
-	                {
-	                    ["dbo.Users.sql"] = new()
-	                    {
-	                        FilePath = "dbo/Tables/Users.sql",
-	                        ObjectName = "Users",
-	                        ObjectType = SqlObjectType.Table,
-	                        ContentHash = "HASH_USERS",
-	                        Content = "CREATE TABLE [dbo].[Users] (Id int)"
-	                    },
-	                    ["dbo.Orders.sql"] = new()
-	                    {
-	                        FilePath = "dbo/Tables/Orders.sql",
-	                        ObjectName = "Orders",
-	                        ObjectType = SqlObjectType.Table,
-	                        ContentHash = "HASH_ORDERS",
-	                        Content = "CREATE TABLE [dbo].[Orders] (Id int)"
-	                    }
-	                }
-	            }
-	        };
+        var fileBuilder = new StubFileModelBuilder
+        {
+            CacheToReturn = new FileModelCache
+            {
+                SubscriptionId = subscriptionId,
+                FileEntries = new Dictionary<string, FileObjectEntry>
+                {
+                    ["dbo.Users.sql"] = new()
+                    {
+                        FilePath = "dbo/Tables/Users.sql",
+                        ObjectName = "Users",
+                        ObjectType = SqlObjectType.Table,
+                        ContentHash = "HASH_USERS",
+                        Content = "CREATE TABLE [dbo].[Users] (Id int)"
+                    },
+                    ["dbo.Orders.sql"] = new()
+                    {
+                        FilePath = "dbo/Tables/Orders.sql",
+                        ObjectName = "Orders",
+                        ObjectType = SqlObjectType.Table,
+                        ContentHash = "HASH_ORDERS",
+                        Content = "CREATE TABLE [dbo].[Orders] (Id int)"
+                    }
+                }
+            }
+        };
 
-	        var comparer = new StubSchemaComparer { DifferencesToReturn = Array.Empty<SchemaDifference>() };
+        var comparer = new StubSchemaComparer { DifferencesToReturn = Array.Empty<SchemaDifference>() };
 
-	        var orchestrator = new ComparisonOrchestrator(
-	            subscriptions, snapshots, history, dbBuilder, schemaReader, fileBuilder,
-	            comparer, CreateOptions(1), NullLogger<ComparisonOrchestrator>.Instance);
+        var orchestrator = new ComparisonOrchestrator(
+            subscriptions, snapshots, history, dbBuilder, schemaReader, fileBuilder,
+            comparer, CreateOptions(1), NullLogger<ComparisonOrchestrator>.Instance);
 
-	        // Act - compare a single object, but expect history/summary for all objects
-	        var result = await orchestrator.CompareObjectAsync(
-	            subscriptionId, "dbo", "Users", SqlObjectType.Table);
+        // Act - compare a single object, but expect history/summary for all objects
+        var result = await orchestrator.CompareObjectAsync(
+            subscriptionId, "dbo", "Users", SqlObjectType.Table);
 
-	        // Assert - per-object result
-	        Assert.True(result.IsSynchronized);
-	        Assert.True(result.ExistsInDatabase);
-	        Assert.True(result.ExistsInFileSystem);
-	        Assert.Null(result.Difference);
+        // Assert - per-object result
+        Assert.True(result.IsSynchronized);
+        Assert.True(result.ExistsInDatabase);
+        Assert.True(result.ExistsInFileSystem);
+        Assert.Null(result.Difference);
 
-	        // Assert - history contains a full comparison summary for the subscription
-	        var persisted = Assert.Single(history.Results);
-	        Assert.Equal(subscriptionId, persisted.SubscriptionId);
-	        Assert.Equal(ComparisonStatus.Synchronized, persisted.Status);
-	        Assert.Equal(0, persisted.Summary.TotalDifferences);
-	        Assert.Equal(2, persisted.Summary.ObjectsCompared);
-	        Assert.Equal(2, persisted.Summary.ObjectsUnchanged);
-	        Assert.Equal(0, persisted.Summary.UnsupportedDatabaseObjectCount);
-	        Assert.Equal(0, persisted.Summary.UnsupportedFileObjectCount);
-	    }
+        // Assert - history contains a full comparison summary for the subscription
+        var persisted = Assert.Single(history.Results);
+        Assert.Equal(subscriptionId, persisted.SubscriptionId);
+        Assert.Equal(ComparisonStatus.Synchronized, persisted.Status);
+        Assert.Equal(0, persisted.Summary.TotalDifferences);
+        Assert.Equal(2, persisted.Summary.ObjectsCompared);
+        Assert.Equal(2, persisted.Summary.ObjectsUnchanged);
+        Assert.Equal(0, persisted.Summary.UnsupportedDatabaseObjectCount);
+        Assert.Equal(0, persisted.Summary.UnsupportedFileObjectCount);
+    }
 
     [Fact]
     public async Task CompareObjectAsync_Returns_Modify_Difference_When_Hashes_Differ()
@@ -680,33 +680,33 @@ public class ComparisonOrchestratorTests
             Options = new ComparisonOptions()
         };
 
-	        var subscriptions = new InMemorySubscriptionRepository { Subscription = subscription };
-	        var snapshots = new InMemorySchemaSnapshotRepository();
-	        var history = new InMemoryComparisonHistoryRepository();
-	
-	        var dbObject = new SchemaObjectSummary
-	        {
-	            SchemaName = "dbo",
-	            ObjectName = "TestProc",
-	            ObjectType = SqlObjectType.StoredProcedure,
-	            DefinitionHash = "DB_HASH",
-	            DefinitionScript = "CREATE PROCEDURE [dbo].[TestProc] AS SELECT 1"
-	        };
-	
-	        var dbBuilder = new StubDatabaseModelBuilder
-	        {
-	            SnapshotToReturn = new SchemaSnapshot
-	            {
-	                SubscriptionId = subscriptionId,
-	                Objects = new List<SchemaObjectSummary> { dbObject }
-	            }
-	        };
-	
-	        var schemaReader = new StubDatabaseSchemaReader
-	        {
-	            ObjectsToReturn = new[] { dbObject }
-	        };
-	
+        var subscriptions = new InMemorySubscriptionRepository { Subscription = subscription };
+        var snapshots = new InMemorySchemaSnapshotRepository();
+        var history = new InMemoryComparisonHistoryRepository();
+
+        var dbObject = new SchemaObjectSummary
+        {
+            SchemaName = "dbo",
+            ObjectName = "TestProc",
+            ObjectType = SqlObjectType.StoredProcedure,
+            DefinitionHash = "DB_HASH",
+            DefinitionScript = "CREATE PROCEDURE [dbo].[TestProc] AS SELECT 1"
+        };
+
+        var dbBuilder = new StubDatabaseModelBuilder
+        {
+            SnapshotToReturn = new SchemaSnapshot
+            {
+                SubscriptionId = subscriptionId,
+                Objects = new List<SchemaObjectSummary> { dbObject }
+            }
+        };
+
+        var schemaReader = new StubDatabaseSchemaReader
+        {
+            ObjectsToReturn = new[] { dbObject }
+        };
+
         var fileBuilder = new StubFileModelBuilder
         {
             CacheToReturn = new FileModelCache
@@ -724,10 +724,10 @@ public class ComparisonOrchestratorTests
                     }
                 }
             }
-	        };
-	
-	        var orchestrator = new ComparisonOrchestrator(
-	            subscriptions, snapshots, history, dbBuilder, schemaReader, fileBuilder, new StubSchemaComparer(), CreateOptions(1), NullLogger<ComparisonOrchestrator>.Instance);
+        };
+
+        var orchestrator = new ComparisonOrchestrator(
+            subscriptions, snapshots, history, dbBuilder, schemaReader, fileBuilder, new StubSchemaComparer(), CreateOptions(1), NullLogger<ComparisonOrchestrator>.Instance);
 
         // Act
         var result = await orchestrator.CompareObjectAsync(
@@ -755,41 +755,41 @@ public class ComparisonOrchestratorTests
             Options = new ComparisonOptions()
         };
 
-	        var subscriptions = new InMemorySubscriptionRepository { Subscription = subscription };
-	        var snapshots = new InMemorySchemaSnapshotRepository();
-	        var history = new InMemoryComparisonHistoryRepository();
-	
-	        var dbObject = new SchemaObjectSummary
-	        {
-	            SchemaName = "dbo",
-	            ObjectName = "TestProc",
-	            ObjectType = SqlObjectType.StoredProcedure,
-	            DefinitionHash = "ABC123",
-	            DefinitionScript = "CREATE PROCEDURE ..."
-	        };
-	
-	        var dbBuilder = new StubDatabaseModelBuilder
-	        {
-	            SnapshotToReturn = new SchemaSnapshot
-	            {
-	                SubscriptionId = subscriptionId,
-	                Objects = new List<SchemaObjectSummary> { dbObject }
-	            }
-	        };
-	
-	        var schemaReader = new StubDatabaseSchemaReader
-	        {
-	            ObjectsToReturn = new[] { dbObject }
-	        };
-	
-	        var fileBuilder = new StubFileModelBuilder
-	        {
-	            CacheToReturn = new FileModelCache { SubscriptionId = subscriptionId }
-	        };
-	
-	        var orchestrator = new ComparisonOrchestrator(
-	            subscriptions, snapshots, history,
-	            dbBuilder, schemaReader, fileBuilder, new StubSchemaComparer(), CreateOptions(1), NullLogger<ComparisonOrchestrator>.Instance);
+        var subscriptions = new InMemorySubscriptionRepository { Subscription = subscription };
+        var snapshots = new InMemorySchemaSnapshotRepository();
+        var history = new InMemoryComparisonHistoryRepository();
+
+        var dbObject = new SchemaObjectSummary
+        {
+            SchemaName = "dbo",
+            ObjectName = "TestProc",
+            ObjectType = SqlObjectType.StoredProcedure,
+            DefinitionHash = "ABC123",
+            DefinitionScript = "CREATE PROCEDURE ..."
+        };
+
+        var dbBuilder = new StubDatabaseModelBuilder
+        {
+            SnapshotToReturn = new SchemaSnapshot
+            {
+                SubscriptionId = subscriptionId,
+                Objects = new List<SchemaObjectSummary> { dbObject }
+            }
+        };
+
+        var schemaReader = new StubDatabaseSchemaReader
+        {
+            ObjectsToReturn = new[] { dbObject }
+        };
+
+        var fileBuilder = new StubFileModelBuilder
+        {
+            CacheToReturn = new FileModelCache { SubscriptionId = subscriptionId }
+        };
+
+        var orchestrator = new ComparisonOrchestrator(
+            subscriptions, snapshots, history,
+            dbBuilder, schemaReader, fileBuilder, new StubSchemaComparer(), CreateOptions(1), NullLogger<ComparisonOrchestrator>.Instance);
 
         // Act
         var result = await orchestrator.CompareObjectAsync(

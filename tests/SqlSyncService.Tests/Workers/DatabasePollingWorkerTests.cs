@@ -53,7 +53,7 @@ public class DatabasePollingWorkerTests
     {
         // This test verifies the SQL type mapping is correct by checking the worker behavior
         var worker = CreateWorker(new MockDebouncer());
-        
+
         // The worker should be created successfully with all type mappings
         Assert.NotNull(worker);
     }
@@ -75,7 +75,7 @@ public class DatabasePollingWorkerTests
         var services = new ServiceCollection();
         services.AddSingleton<ISubscriptionRepository>(new MockSubscriptionRepository());
         services.AddSingleton<IHubContext<SyncHub>>(new MockHubContext());
-        
+
         var serviceProvider = services.BuildServiceProvider();
 
         return new DatabasePollingWorker(

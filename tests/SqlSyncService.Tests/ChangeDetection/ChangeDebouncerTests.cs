@@ -55,7 +55,7 @@ public class ChangeDebouncerTests : IDisposable
         _debouncer.RecordChange(subscriptionId, "dbo.Table2", ChangeSource.FileSystem, ChangeType.Created);
         await Task.Delay(20);
         _debouncer.RecordChange(subscriptionId, "dbo.View1", ChangeSource.Database, ChangeType.Modified);
-        
+
         await Task.Delay(_debounceWindow + TimeSpan.FromMilliseconds(50));
 
         // Assert - All changes should be in single batch
@@ -77,7 +77,7 @@ public class ChangeDebouncerTests : IDisposable
         _debouncer.RecordChange(subscriptionId, "dbo.Table1", ChangeSource.FileSystem, ChangeType.Modified);
         await Task.Delay(10);
         _debouncer.RecordChange(subscriptionId, "dbo.Table1", ChangeSource.FileSystem, ChangeType.Deleted);
-        
+
         await Task.Delay(_debounceWindow + TimeSpan.FromMilliseconds(50));
 
         // Assert - Only the last change should be present (Delete)
@@ -98,7 +98,7 @@ public class ChangeDebouncerTests : IDisposable
         // Act
         _debouncer.RecordChange(subscriptionId1, "dbo.Table1", ChangeSource.FileSystem, ChangeType.Modified);
         _debouncer.RecordChange(subscriptionId2, "dbo.Table2", ChangeSource.FileSystem, ChangeType.Modified);
-        
+
         await Task.Delay(_debounceWindow + TimeSpan.FromMilliseconds(100));
 
         // Assert - Each subscription should get its own batch
@@ -118,7 +118,7 @@ public class ChangeDebouncerTests : IDisposable
         // Act - Record change and wait for batch to be emitted
         _debouncer.RecordChange(subscriptionId, "dbo.Table1", ChangeSource.FileSystem, ChangeType.Modified);
         await Task.Delay(_debounceWindow + TimeSpan.FromMilliseconds(50));
-        
+
         var firstBatch = receivedBatch;
         receivedBatch = null;
 

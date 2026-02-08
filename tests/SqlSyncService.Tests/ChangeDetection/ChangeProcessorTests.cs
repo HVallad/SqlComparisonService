@@ -64,7 +64,7 @@ public class ChangeProcessorTests
     {
         // Arrange
         var subscriptionId = Guid.NewGuid();
-        _subscriptionRepo.Subscription = CreateSubscription(subscriptionId, SubscriptionState.Active, 
+        _subscriptionRepo.Subscription = CreateSubscription(subscriptionId, SubscriptionState.Active,
             autoCompare: true, compareOnFileChange: true);
         var batch = CreateBatch(subscriptionId, 1, ChangeSource.FileSystem);
 
