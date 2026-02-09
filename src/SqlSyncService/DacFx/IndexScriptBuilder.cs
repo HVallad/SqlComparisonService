@@ -12,8 +12,9 @@ namespace SqlSyncService.DacFx;
 internal static class IndexScriptBuilder
 {
     // Query for all user-defined indexes (excluding primary keys and unique constraints which are table-level)
-    // Includes data compression information from sys.partitions (using partition_number = 1 for non-partitioned indexes)
-    // and filter definition for filtered indexes (has_filter, filter_definition)
+    // Includes data compression information from sys.partitions (using partition_number = 1 for non-partitioned indexes),
+    // filter definition for filtered indexes (has_filter, filter_definition), and fill_factor.
+    // Note: fill_factor of 0 in SQL Server means 100% (the default), so we normalize 0 to 100.
     private const string AllIndexesQuery = @"
         SELECT
             SCHEMA_NAME(t.schema_id) AS SchemaName,
@@ -23,7 +24,8 @@ internal static class IndexScriptBuilder
             i.is_unique,
             ISNULL(p.data_compression_desc, 'NONE') AS DataCompression,
             i.has_filter,
-            i.filter_definition
+            i.filter_definition,
+            CASE WHEN i.fill_factor = 0 THEN 100 ELSE i.fill_factor END AS [FillFactor]
         FROM sys.indexes i
         JOIN sys.tables t ON i.object_id = t.object_id
         LEFT JOIN sys.partitions p ON i.object_id = p.object_id
@@ -71,7 +73,8 @@ internal static class IndexScriptBuilder
                 IsUnique = reader.GetBoolean(4),
                 DataCompression = reader.GetString(5),
                 HasFilter = reader.GetBoolean(6),
-                FilterDefinition = reader.IsDBNull(7) ? null : reader.GetString(7)
+                FilterDefinition = reader.IsDBNull(7) ? null : reader.GetString(7),
+                FillFactor = reader.GetInt32(8)
             });
         }
 
@@ -99,7 +102,7 @@ internal static class IndexScriptBuilder
         string indexName,
         CancellationToken cancellationToken = default)
     {
-        // Get index metadata including data compression and filter definition
+        // Get index metadata including data compression, filter definition, and fill factor
         var query = @"
             SELECT
                 SCHEMA_NAME(t.schema_id) AS SchemaName,
@@ -109,7 +112,8 @@ internal static class IndexScriptBuilder
                 i.is_unique,
                 ISNULL(p.data_compression_desc, 'NONE') AS DataCompression,
                 i.has_filter,
-                i.filter_definition
+                i.filter_definition,
+                CASE WHEN i.fill_factor = 0 THEN 100 ELSE i.fill_factor END AS [FillFactor]
             FROM sys.indexes i
             JOIN sys.tables t ON i.object_id = t.object_id
             LEFT JOIN sys.partitions p ON i.object_id = p.object_id
@@ -140,7 +144,8 @@ internal static class IndexScriptBuilder
             IsUnique = reader.GetBoolean(4),
             DataCompression = reader.GetString(5),
             HasFilter = reader.GetBoolean(6),
-            FilterDefinition = reader.IsDBNull(7) ? null : reader.GetString(7)
+            FilterDefinition = reader.IsDBNull(7) ? null : reader.GetString(7),
+            FillFactor = reader.GetInt32(8)
         };
 
         await reader.CloseAsync().ConfigureAwait(false);
@@ -230,11 +235,24 @@ internal static class IndexScriptBuilder
             sb.Append($" WHERE {index.FilterDefinition}");
         }
 
-        // WITH clause for index options (e.g., DATA_COMPRESSION)
+        // WITH clause for index options (DATA_COMPRESSION, FILLFACTOR)
+        var withOptions = new List<string>();
+
         if (!string.IsNullOrEmpty(index.DataCompression) &&
             !index.DataCompression.Equals("NONE", StringComparison.OrdinalIgnoreCase))
         {
-            sb.Append($" WITH (DATA_COMPRESSION = {index.DataCompression})");
+            withOptions.Add($"DATA_COMPRESSION = {index.DataCompression}");
+        }
+
+        // Include FILLFACTOR if it's not the default (100)
+        if (index.FillFactor > 0 && index.FillFactor < 100)
+        {
+            withOptions.Add($"FILLFACTOR = {index.FillFactor}");
+        }
+
+        if (withOptions.Count > 0)
+        {
+            sb.Append($" WITH ({string.Join(", ", withOptions)})");
         }
 
         return sb.ToString();
@@ -279,6 +297,11 @@ internal class IndexMetadata
     public string DataCompression { get; set; } = "NONE";
     public bool HasFilter { get; set; }
     public string? FilterDefinition { get; set; }
+    /// <summary>
+    /// Fill factor percentage (1-100). SQL Server stores 0 for default which means 100%.
+    /// We normalize 0 to 100 in the query so this will always be 1-100.
+    /// </summary>
+    public int FillFactor { get; set; } = 100;
 }
 
 /// <summary>

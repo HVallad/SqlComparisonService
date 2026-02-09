@@ -360,8 +360,10 @@ public class DatabaseSchemaReader : IDatabaseSchemaReader
         {
             while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             {
-                var schemaName = reader.IsDBNull(0) ? "dbo" : reader.GetString(0);
-                var objectName = reader.GetString(1);
+                // Trim object names to match SQL Server's lenient name resolution behavior
+                // (SQL Server ignores trailing spaces when resolving object names)
+                var schemaName = reader.IsDBNull(0) ? "dbo" : reader.GetString(0).Trim();
+                var objectName = reader.GetString(1).Trim();
                 var sqlType = reader.GetString(2).Trim();
                 var modifyDate = reader.GetDateTime(3);
                 var definition = reader.IsDBNull(4) ? string.Empty : reader.GetString(4);
@@ -417,8 +419,9 @@ public class DatabaseSchemaReader : IDatabaseSchemaReader
         {
             while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             {
-                var schemaName = reader.IsDBNull(0) ? "dbo" : reader.GetString(0);
-                var tableName = reader.GetString(1);
+                // Trim names to match SQL Server's lenient name resolution behavior
+                var schemaName = reader.IsDBNull(0) ? "dbo" : reader.GetString(0).Trim();
+                var tableName = reader.GetString(1).Trim();
                 var modifyDate = reader.GetDateTime(2);
                 tables.Add((schemaName, tableName, modifyDate));
             }
@@ -513,8 +516,8 @@ public class DatabaseSchemaReader : IDatabaseSchemaReader
         {
             while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             {
-                var userName = reader.GetString(0);
-                var defaultSchema = reader.IsDBNull(2) ? null : reader.GetString(2);
+                var userName = reader.GetString(0).Trim();
+                var defaultSchema = reader.IsDBNull(2) ? null : reader.GetString(2).Trim();
 
                 var definition = BuildUserScript(userName, defaultSchema);
                 var summary = BuildSecurityPrincipalSummary(string.Empty, userName, SqlObjectType.User, definition);
@@ -562,7 +565,7 @@ public class DatabaseSchemaReader : IDatabaseSchemaReader
         {
             while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             {
-                var roleName = reader.GetString(0);
+                var roleName = reader.GetString(0).Trim();
                 var definition = $"CREATE ROLE [{roleName}]";
                 var summary = BuildSecurityPrincipalSummary(string.Empty, roleName, SqlObjectType.Role, definition);
                 results.Add(summary);
@@ -583,8 +586,9 @@ public class DatabaseSchemaReader : IDatabaseSchemaReader
 
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
-            var schemaName = reader.IsDBNull(0) ? "dbo" : reader.GetString(0);
-            var objectName = reader.GetString(1);
+            // Trim names to match SQL Server's lenient name resolution behavior
+            var schemaName = reader.IsDBNull(0) ? "dbo" : reader.GetString(0).Trim();
+            var objectName = reader.GetString(1).Trim();
             var sqlType = reader.GetString(2).Trim();
             var modifyDate = reader.GetDateTime(3);
             var definition = reader.IsDBNull(4) ? string.Empty : reader.GetString(4);
@@ -644,8 +648,9 @@ public class DatabaseSchemaReader : IDatabaseSchemaReader
 
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
-            var schemaName = reader.IsDBNull(0) ? "dbo" : reader.GetString(0);
-            var objectName = reader.GetString(1);
+            // Trim names to match SQL Server's lenient name resolution behavior
+            var schemaName = reader.IsDBNull(0) ? "dbo" : reader.GetString(0).Trim();
+            var objectName = reader.GetString(1).Trim();
             var modifyDate = reader.GetDateTime(3);
             var definition = reader.IsDBNull(4) ? string.Empty : reader.GetString(4);
 
@@ -695,8 +700,9 @@ public class DatabaseSchemaReader : IDatabaseSchemaReader
         var tables = new List<(string SchemaName, string TableName, DateTime ModifyDate)>();
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
-            var schemaName = reader.IsDBNull(0) ? "dbo" : reader.GetString(0);
-            var tableName = reader.GetString(1);
+            // Trim names to match SQL Server's lenient name resolution behavior
+            var schemaName = reader.IsDBNull(0) ? "dbo" : reader.GetString(0).Trim();
+            var tableName = reader.GetString(1).Trim();
             var modifyDate = reader.GetDateTime(2);
             tables.Add((schemaName, tableName, modifyDate));
         }
@@ -790,9 +796,9 @@ public class DatabaseSchemaReader : IDatabaseSchemaReader
 
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
-            var userName = reader.GetString(0);
+            var userName = reader.GetString(0).Trim();
             var typeDesc = reader.IsDBNull(1) ? string.Empty : reader.GetString(1);
-            var defaultSchema = reader.IsDBNull(2) ? null : reader.GetString(2);
+            var defaultSchema = reader.IsDBNull(2) ? null : reader.GetString(2)?.Trim();
 
             var definition = BuildUserScript(userName, defaultSchema);
             var summary = BuildSecurityPrincipalSummary(string.Empty, userName, SqlObjectType.User, definition);
@@ -825,7 +831,7 @@ public class DatabaseSchemaReader : IDatabaseSchemaReader
         if (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
             var typeDesc = reader.IsDBNull(1) ? string.Empty : reader.GetString(1);
-            var defaultSchema = reader.IsDBNull(2) ? null : reader.GetString(2);
+            var defaultSchema = reader.IsDBNull(2) ? null : reader.GetString(2)?.Trim();
 
             var definition = BuildUserScript(userName, defaultSchema);
             return BuildSecurityPrincipalSummary(string.Empty, userName, SqlObjectType.User, definition);
@@ -845,7 +851,7 @@ public class DatabaseSchemaReader : IDatabaseSchemaReader
 
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
-            var roleName = reader.GetString(0);
+            var roleName = reader.GetString(0).Trim();
             var definition = $"CREATE ROLE [{roleName}]";
             var summary = BuildSecurityPrincipalSummary(string.Empty, roleName, SqlObjectType.Role, definition);
             results.Add(summary);

@@ -234,8 +234,9 @@ public sealed class DatabasePollingWorker : BackgroundService
 
         while (await reader.ReadAsync(cancellationToken))
         {
-            var schemaName = reader.IsDBNull(0) ? "dbo" : reader.GetString(0);
-            var objectName = reader.GetString(1);
+            // Trim names to match SQL Server's lenient name resolution behavior
+            var schemaName = reader.IsDBNull(0) ? "dbo" : reader.GetString(0).Trim();
+            var objectName = reader.GetString(1).Trim();
             var sqlType = reader.GetString(2).Trim();
             var modifyDate = reader.GetDateTime(3);
 

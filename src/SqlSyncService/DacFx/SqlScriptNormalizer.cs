@@ -236,6 +236,11 @@ internal static class SqlScriptNormalizer
         // database generates just "CREATE ROLE [name]".
         result = NormalizeCreateRoleSyntax(result);
 
+        // Normalize object names inside square brackets by trimming whitespace.
+        // SQL Server is lenient with trailing spaces in object names during resolution,
+        // but stores the exact name. This normalizes "[ObjectName ]" to "[ObjectName]".
+        result = NormalizeBracketedIdentifiers(result);
+
         return result;
     }
 
@@ -1097,18 +1102,20 @@ internal static class SqlScriptNormalizer
 
     /// <summary>
     /// Strips column-level inline constraint/default segments from a single
-    /// column definition line. This is a heuristic intended to handle common
-    /// patterns such as temporal table default constraints, e.g.:
+    /// column definition line. This handles both named and unnamed defaults:
     ///
-    ///   [ValidFrom] DATETIME2 (7) GENERATED ALWAYS AS ROW START
-    ///       CONSTRAINT [DF_ValidFrom] DEFAULT (sysutcdatetime()) NOT NULL,
+    /// Named constraint pattern:
+    ///   [ValidFrom] DATETIME2 (7) CONSTRAINT [DF_ValidFrom] DEFAULT (sysutcdatetime()) NOT NULL,
+    /// becomes:
+    ///   [ValidFrom] DATETIME2 (7) NOT NULL,
     ///
-    /// and turns it into:
+    /// Unnamed default pattern:
+    ///   [Enabled] BIT DEFAULT((1)) NULL,
+    /// becomes:
+    ///   [Enabled] BIT NULL,
     ///
-    ///   [ValidFrom] DATETIME2 (7) GENERATED ALWAYS AS ROW START NOT NULL,
-    ///
-    /// preserving the column definition and nullability while removing the
-    /// named default constraint.
+    /// The method preserves the column definition and nullability while removing
+    /// the default constraint.
     /// </summary>
     private static string StripColumnLevelConstraint(string line)
     {
@@ -1117,15 +1124,33 @@ internal static class SqlScriptNormalizer
             return line;
         }
 
-        // Look for a CONSTRAINT token that is not at the very start of the
-        // line (to avoid touching standalone constraint lines).
+        // First, try to find a named CONSTRAINT token that is not at the very start
+        // of the line (to avoid touching standalone constraint lines).
         var constraintIndex = line.IndexOf("CONSTRAINT", StringComparison.OrdinalIgnoreCase);
-        if (constraintIndex <= 0)
+        if (constraintIndex > 0)
         {
-            return line;
+            return StripFromIndex(line, constraintIndex);
         }
 
-        var prefix = line.Substring(0, constraintIndex);
+        // If no named constraint, look for an unnamed DEFAULT that is not at the
+        // start of the line. We need to be careful to match DEFAULT followed by
+        // an opening parenthesis (with optional whitespace).
+        var defaultMatch = Regex.Match(line, @"(?<=\s)DEFAULT\s*\(", RegexOptions.IgnoreCase);
+        if (defaultMatch.Success && defaultMatch.Index > 0)
+        {
+            return StripFromIndex(line, defaultMatch.Index);
+        }
+
+        return line;
+    }
+
+    /// <summary>
+    /// Helper method that strips content from a given index, preserving the prefix
+    /// and any trailing NULL/NOT NULL modifier.
+    /// </summary>
+    private static string StripFromIndex(string line, int stripStartIndex)
+    {
+        var prefix = line.Substring(0, stripStartIndex);
 
         // Try to preserve explicit NULL/NOT NULL that appears after the
         // default expression. We search from the end so that we prefer the
@@ -1144,7 +1169,7 @@ internal static class SqlScriptNormalizer
         }
 
         string tail = string.Empty;
-        if (nullabilityIndex > constraintIndex)
+        if (nullabilityIndex > stripStartIndex)
         {
             tail = line.Substring(nullabilityIndex);
         }
@@ -1324,6 +1349,9 @@ internal static class SqlScriptNormalizer
     ///
     /// Index scripts are single-statement DDL where newlines are purely stylistic formatting,
     /// so "CREATE INDEX [X] ON [T]([A])" and "CREATE INDEX [X]\n    ON [T]([A])" should compare equal.
+    ///
+    /// Also strips FILLFACTOR = 100 since it's the default value and SQL Server doesn't
+    /// include it when extracting index definitions.
     /// </summary>
     public static string NormalizeIndexForComparison(string? script)
     {
@@ -1332,6 +1360,13 @@ internal static class SqlScriptNormalizer
         {
             return string.Empty;
         }
+
+        // Strip FILLFACTOR = 100 since it's the default value
+        // Handles patterns like:
+        //   "WITH (FILLFACTOR = 100)" -> "WITH ()"
+        //   "WITH (DATA_COMPRESSION = PAGE, FILLFACTOR = 100)" -> "WITH (DATA_COMPRESSION = PAGE)"
+        //   "WITH (FILLFACTOR = 100, DATA_COMPRESSION = PAGE)" -> "WITH (DATA_COMPRESSION = PAGE)"
+        normalized = StripDefaultFillFactor(normalized);
 
         // Replace any sequence of whitespace (including newlines) with a single space.
         // This collapses multi-line index scripts into a single canonical line.
@@ -1356,6 +1391,48 @@ internal static class SqlScriptNormalizer
         }
 
         return result.ToString().Trim();
+    }
+
+    /// <summary>
+    /// Strips FILLFACTOR = 100 from index WITH clauses since it's the default value.
+    /// Also cleans up empty WITH clauses and trailing/leading commas.
+    /// </summary>
+    private static string StripDefaultFillFactor(string script)
+    {
+        // Remove ", FILLFACTOR = 100" (when FILLFACTOR comes after another option)
+        script = Regex.Replace(script, @",\s*FILLFACTOR\s*=\s*100\b", "", RegexOptions.IgnoreCase);
+
+        // Remove "FILLFACTOR = 100, " (when FILLFACTOR comes before another option)
+        script = Regex.Replace(script, @"\bFILLFACTOR\s*=\s*100\s*,\s*", "", RegexOptions.IgnoreCase);
+
+        // Remove "FILLFACTOR = 100" (when it's the only option - will leave empty WITH())
+        script = Regex.Replace(script, @"\bFILLFACTOR\s*=\s*100\b", "", RegexOptions.IgnoreCase);
+
+        // Clean up empty WITH clauses: "WITH ()" or "WITH ( )"
+        script = Regex.Replace(script, @"\s*WITH\s*\(\s*\)", "", RegexOptions.IgnoreCase);
+
+        return script;
+    }
+
+    /// <summary>
+    /// Normalizes bracketed identifiers by trimming whitespace inside the brackets.
+    /// SQL Server is lenient with trailing spaces in object names during resolution,
+    /// but stores the exact name in sys.objects.name. This normalizes "[ObjectName ]" to "[ObjectName]".
+    /// </summary>
+    private static string NormalizeBracketedIdentifiers(string script)
+    {
+        if (string.IsNullOrEmpty(script))
+        {
+            return script;
+        }
+
+        // Match bracketed identifiers and trim whitespace inside
+        // Pattern: [identifier with possible trailing/leading spaces]
+        return Regex.Replace(script, @"\[([^\]]+)\]", match =>
+        {
+            var identifier = match.Groups[1].Value.Trim();
+            return $"[{identifier}]";
+        });
     }
 }
 

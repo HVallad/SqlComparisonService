@@ -8,7 +8,7 @@ namespace SqlSyncService.DacFx;
 /// </summary>
 internal static class TableScriptBuilder
 {
-    // Query for table columns with all metadata including temporal column info
+    // Query for table columns with all metadata including temporal column info and computed column persistence
     private const string ColumnsQuery = @"
         SELECT
             c.column_id,
@@ -24,7 +24,8 @@ internal static class TableScriptBuilder
             ISNULL(ic.is_not_for_replication, 0) AS is_not_for_replication,
             cc.definition AS ComputedDefinition,
             c.is_computed,
-            c.generated_always_type
+            c.generated_always_type,
+            ISNULL(cc.is_persisted, 0) AS is_persisted
         FROM sys.columns c
         JOIN sys.types t ON c.user_type_id = t.user_type_id
         LEFT JOIN sys.identity_columns ic ON c.object_id = ic.object_id AND c.column_id = ic.column_id
@@ -80,7 +81,8 @@ internal static class TableScriptBuilder
                     IsNotForReplication = reader.GetBoolean(10),
                     ComputedDefinition = reader.IsDBNull(11) ? null : reader.GetString(11),
                     IsComputed = reader.GetBoolean(12),
-                    GeneratedAlwaysType = reader.IsDBNull(13) ? (byte)0 : Convert.ToByte(reader.GetValue(13))
+                    GeneratedAlwaysType = reader.IsDBNull(13) ? (byte)0 : Convert.ToByte(reader.GetValue(13)),
+                    IsPersisted = reader.GetBoolean(14)
                 };
                 columns.Add(column);
             }
@@ -241,8 +243,22 @@ internal static class TableScriptBuilder
 
         if (column.IsComputed && !string.IsNullOrEmpty(column.ComputedDefinition))
         {
-            // Computed column
+            // Computed column: AS (expression) [PERSISTED] [NOT NULL]
             sb.Append($" AS {column.ComputedDefinition}");
+
+            // Add PERSISTED if the computed column is persisted
+            if (column.IsPersisted)
+            {
+                sb.Append(" PERSISTED");
+            }
+
+            // For computed columns, nullability is inferred from the expression.
+            // Only output NOT NULL if explicitly constrained (overrides inference).
+            // Don't output NULL since it's redundant with the inferred nullability.
+            if (!column.IsNullable)
+            {
+                sb.Append(" NOT NULL");
+            }
         }
         else
         {
@@ -341,6 +357,11 @@ internal class ColumnDefinition
     public bool IsNotForReplication { get; set; }
     public string? ComputedDefinition { get; set; }
     public bool IsComputed { get; set; }
+
+    /// <summary>
+    /// Whether the computed column is persisted (stored physically in the table).
+    /// </summary>
+    public bool IsPersisted { get; set; }
 
     /// <summary>
     /// SQL Server generated_always_type:
