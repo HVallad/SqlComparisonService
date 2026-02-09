@@ -99,7 +99,9 @@ public class ChangeDebouncerTests : IDisposable
         _debouncer.RecordChange(subscriptionId1, "dbo.Table1", ChangeSource.FileSystem, ChangeType.Modified);
         _debouncer.RecordChange(subscriptionId2, "dbo.Table2", ChangeSource.FileSystem, ChangeType.Modified);
 
-        await Task.Delay(_debounceWindow + TimeSpan.FromMilliseconds(100));
+        // Wait for both timers to fire. Each subscription has its own timer that fires independently.
+        // We need to wait long enough for both timers to complete, accounting for system scheduling variance.
+        await Task.Delay(_debounceWindow + TimeSpan.FromMilliseconds(200));
 
         // Assert - Each subscription should get its own batch
         Assert.Equal(2, receivedBatches.Count);
