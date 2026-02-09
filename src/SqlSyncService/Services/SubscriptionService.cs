@@ -4,6 +4,8 @@ using SqlSyncService.Contracts.Subscriptions;
 using SqlSyncService.Domain.Comparisons;
 using SqlSyncService.Domain.Subscriptions;
 using SqlSyncService.Persistence;
+using SqlSyncService.Realtime;
+using SqlSyncService.Realtime.Events;
 
 namespace SqlSyncService.Services;
 
@@ -11,11 +13,16 @@ public sealed class SubscriptionService : ISubscriptionService
 {
     private readonly ISubscriptionRepository _subscriptions;
     private readonly IComparisonHistoryRepository _history;
+    private readonly IRealtimeEventPublisher _eventPublisher;
 
-    public SubscriptionService(ISubscriptionRepository subscriptions, IComparisonHistoryRepository history)
+    public SubscriptionService(
+        ISubscriptionRepository subscriptions,
+        IComparisonHistoryRepository history,
+        IRealtimeEventPublisher eventPublisher)
     {
         _subscriptions = subscriptions;
         _history = history;
+        _eventPublisher = eventPublisher;
     }
 
     public async Task<IReadOnlyList<Subscription>> GetAllAsync(SubscriptionState? stateFilter = null, CancellationToken cancellationToken = default)
@@ -67,6 +74,27 @@ public sealed class SubscriptionService : ISubscriptionService
         };
 
         await _subscriptions.AddAsync(subscription, cancellationToken).ConfigureAwait(false);
+
+        // Emit SubscriptionCreated event
+        await _eventPublisher.PublishToAllSubscriptionsAsync(
+            RealtimeEventNames.SubscriptionCreated,
+            new SubscriptionCreatedEvent
+            {
+                SubscriptionId = subscription.Id,
+                Name = subscription.Name,
+                CreatedAt = new DateTimeOffset(subscription.CreatedAt, TimeSpan.Zero),
+                Database = new SubscriptionCreatedDatabaseInfo
+                {
+                    Server = subscription.Database.Server,
+                    Database = subscription.Database.Database
+                },
+                Project = new SubscriptionCreatedProjectInfo
+                {
+                    ProjectPath = subscription.Project.RootPath
+                }
+            },
+            cancellationToken).ConfigureAwait(false);
+
         return subscription;
     }
 
@@ -192,6 +220,13 @@ public sealed class SubscriptionService : ISubscriptionService
 
     public async Task<bool> DeleteAsync(Guid id, bool deleteHistory, CancellationToken cancellationToken = default)
     {
+        // Get subscription first to capture name for event
+        var subscription = await _subscriptions.GetByIdAsync(id, cancellationToken).ConfigureAwait(false);
+        if (subscription == null)
+        {
+            return false;
+        }
+
         var deleted = await _subscriptions.DeleteAsync(id, cancellationToken).ConfigureAwait(false);
         if (!deleted)
         {
@@ -203,6 +238,17 @@ public sealed class SubscriptionService : ISubscriptionService
             await _history.DeleteBySubscriptionAsync(id, cancellationToken).ConfigureAwait(false);
         }
 
+        // Emit SubscriptionDeleted event
+        await _eventPublisher.PublishToAllSubscriptionsAsync(
+            RealtimeEventNames.SubscriptionDeleted,
+            new SubscriptionDeletedEvent
+            {
+                SubscriptionId = id,
+                Name = subscription.Name,
+                DeletedAt = DateTimeOffset.UtcNow
+            },
+            cancellationToken).ConfigureAwait(false);
+
         return true;
     }
 
@@ -211,6 +257,7 @@ public sealed class SubscriptionService : ISubscriptionService
         var subscription = await _subscriptions.GetByIdAsync(id, cancellationToken).ConfigureAwait(false)
                           ?? throw new SubscriptionNotFoundException(id);
 
+        var previousState = subscription.State;
         subscription.State = SubscriptionState.Paused;
         if (!subscription.PausedAt.HasValue)
         {
@@ -219,6 +266,22 @@ public sealed class SubscriptionService : ISubscriptionService
 
         subscription.UpdatedAt = DateTime.UtcNow;
         await _subscriptions.UpdateAsync(subscription, cancellationToken).ConfigureAwait(false);
+
+        // Emit SubscriptionStateChanged event
+        await _eventPublisher.PublishToSubscriptionAsync(
+            subscription.Id,
+            RealtimeEventNames.SubscriptionStateChanged,
+            new SubscriptionStateChangedEvent
+            {
+                SubscriptionId = subscription.Id,
+                Timestamp = DateTimeOffset.UtcNow,
+                PreviousState = previousState.ToString().ToLowerInvariant(),
+                NewState = "paused",
+                Reason = "User requested pause",
+                TriggeredBy = "api"
+            },
+            cancellationToken).ConfigureAwait(false);
+
         return subscription;
     }
 
@@ -232,11 +295,28 @@ public sealed class SubscriptionService : ISubscriptionService
             throw new SubscriptionConflictException($"Subscription '{id}' is not paused.", "state");
         }
 
+        var previousState = subscription.State;
         subscription.State = SubscriptionState.Active;
         subscription.ResumedAt = DateTime.UtcNow;
         subscription.UpdatedAt = DateTime.UtcNow;
 
         await _subscriptions.UpdateAsync(subscription, cancellationToken).ConfigureAwait(false);
+
+        // Emit SubscriptionStateChanged event
+        await _eventPublisher.PublishToSubscriptionAsync(
+            subscription.Id,
+            RealtimeEventNames.SubscriptionStateChanged,
+            new SubscriptionStateChangedEvent
+            {
+                SubscriptionId = subscription.Id,
+                Timestamp = DateTimeOffset.UtcNow,
+                PreviousState = previousState.ToString().ToLowerInvariant(),
+                NewState = "active",
+                Reason = "User requested resume",
+                TriggeredBy = "api"
+            },
+            cancellationToken).ConfigureAwait(false);
+
         return subscription;
     }
 

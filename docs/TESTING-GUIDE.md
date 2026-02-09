@@ -645,11 +645,21 @@ Workers are configured in `appsettings.json` under `Service.Workers`. You can di
 
 ### 10.4 SignalR Events
 
+The following events are emitted via SignalR (see Section 12 for full documentation):
+
 | Event | Source |
 |-------|--------|
-| `ChangesDetected` | ChangeProcessor |
+| `FileChanged` | FileWatchingWorker |
 | `DatabaseChanged` | DatabasePollingWorker |
 | `SubscriptionHealthChanged` | HealthCheckWorker |
+| `ComparisonStarted` | ComparisonOrchestrator |
+| `ComparisonCompleted` | ComparisonOrchestrator |
+| `ComparisonFailed` | ComparisonOrchestrator |
+| `DifferencesDetected` | ComparisonOrchestrator |
+| `SubscriptionCreated` | SubscriptionService |
+| `SubscriptionDeleted` | SubscriptionService |
+| `SubscriptionStateChanged` | SubscriptionService |
+| `ServiceShuttingDown` | Application Lifecycle |
 
 ### 10.5 Subscription Health
 
@@ -659,17 +669,310 @@ Health status values: `Healthy`, `Degraded`, `Unhealthy`, `Unknown`
 
 ## 11. Testing Background Workers
 
-The test suite includes 28 unit tests for background workers:
+The test suite includes comprehensive unit tests for background workers and SignalR integration:
 
 - `ChangeDebouncerTests.cs` - Debounce window, batch aggregation
-- `ChangeProcessorTests.cs` - Batch persistence, SignalR notifications
+- `ChangeProcessorTests.cs` - Batch persistence, comparison triggering
 - `CacheCleanupWorkerTests.cs` - Retention policy enforcement
 - `HealthCheckWorkerTests.cs` - Health status determination
+- `SignalRHubTests.cs` - Hub integration tests and InMemoryConnectionTracker tests
 
-Run all 177 tests with `dotnet test`
+Run all **227 tests** with `dotnet test`
 
 ---
 
-## 12. Summary
+## 12. SignalR Real-Time Events (Milestone 9)
 
-With Milestones 7 and 8, you can register subscriptions, trigger comparisons, browse history, benefit from automatic change detection, and monitor subscription health via SignalR events.
+Milestone 9 introduces comprehensive real-time event notifications via SignalR. Clients can subscribe to receive live updates about file changes, database changes, comparison results, and service lifecycle events.
+
+### 12.1 Connecting to the SignalR Hub
+
+The SignalR hub is available at `/hubs/sync`. Connect using a SignalR client library.
+
+#### JavaScript/TypeScript Example
+
+```javascript
+import * as signalR from "@microsoft/signalr";
+
+const connection = new signalR.HubConnectionBuilder()
+    .withUrl("http://localhost:5050/hubs/sync")
+    .withAutomaticReconnect()
+    .build();
+
+await connection.start();
+```
+
+### 12.2 Hub Methods
+
+Once connected, use these hub methods to subscribe to events:
+
+| Method | Parameters | Description |
+|--------|------------|-------------|
+| `JoinSubscription` | `subscriptionId` (GUID) | Join a group to receive events for a specific subscription |
+| `LeaveSubscription` | `subscriptionId` (GUID) | Leave the group for a specific subscription |
+| `JoinAll` | (none) | Join the global group to receive events for all subscriptions |
+| `LeaveAll` | (none) | Leave the global group |
+
+#### Example: Subscribe to a specific subscription
+
+```javascript
+// Join a subscription group
+await connection.invoke("JoinSubscription", "550e8400-e29b-41d4-a716-446655440001");
+
+// Leave when done
+await connection.invoke("LeaveSubscription", "550e8400-e29b-41d4-a716-446655440001");
+```
+
+#### Example: Subscribe to all events
+
+```javascript
+// Join all subscriptions group
+await connection.invoke("JoinAll");
+
+// Leave when done
+await connection.invoke("LeaveAll");
+```
+
+### 12.3 Event Listeners
+
+Register handlers for events before or after connecting:
+
+```javascript
+// File changes
+connection.on("FileChanged", (event) => {
+    console.log(`File ${event.changeType}: ${event.filePath}`);
+});
+
+// Database changes
+connection.on("DatabaseChanged", (event) => {
+    console.log(`Database object ${event.changeType}: ${event.objectName}`);
+});
+
+// Comparison events
+connection.on("ComparisonStarted", (event) => {
+    console.log(`Comparison started: ${event.comparisonId}`);
+});
+
+connection.on("ComparisonCompleted", (event) => {
+    console.log(`Comparison completed in ${event.duration}: ${event.status}`);
+});
+
+connection.on("ComparisonFailed", (event) => {
+    console.log(`Comparison failed: ${event.error.message}`);
+});
+
+connection.on("DifferencesDetected", (event) => {
+    console.log(`${event.summary.totalDifferences} differences found`);
+});
+
+// Subscription lifecycle
+connection.on("SubscriptionCreated", (event) => {
+    console.log(`Subscription created: ${event.subscriptionName}`);
+});
+
+connection.on("SubscriptionHealthChanged", (event) => {
+    console.log(`Health: ${event.previousHealth} -> ${event.newHealth}`);
+});
+
+// Service lifecycle
+connection.on("ServiceShuttingDown", (event) => {
+    console.log(`Service shutting down: ${event.reason}`);
+});
+```
+
+### 12.4 Event Reference
+
+#### FileChanged
+
+Emitted when a file is created, modified, deleted, or renamed in a monitored SQL project folder.
+
+```json
+{
+    "subscriptionId": "550e8400-e29b-41d4-a716-446655440001",
+    "timestamp": "2024-01-15T10:30:00Z",
+    "changeType": "modified",
+    "filePath": "Tables/dbo.Users.sql",
+    "oldFilePath": null,
+    "objectName": "dbo.Users",
+    "objectType": "table"
+}
+```
+
+#### DatabaseChanged
+
+Emitted when a database schema object is modified (detected via polling).
+
+```json
+{
+    "subscriptionId": "550e8400-e29b-41d4-a716-446655440001",
+    "timestamp": "2024-01-15T10:30:00Z",
+    "changeType": "modified",
+    "objectName": "dbo.GetUsers",
+    "objectType": "stored-procedure",
+    "schemaName": "dbo"
+}
+```
+
+#### SubscriptionHealthChanged
+
+Emitted when a subscription's health status changes.
+
+```json
+{
+    "subscriptionId": "550e8400-e29b-41d4-a716-446655440001",
+    "timestamp": "2024-01-15T10:30:00Z",
+    "previousHealth": "healthy",
+    "newHealth": "degraded",
+    "issues": [
+        {
+            "type": "database",
+            "message": "Database connection failed",
+            "since": "2024-01-15T10:29:00Z"
+        }
+    ]
+}
+```
+
+#### ComparisonStarted
+
+Emitted when a comparison begins.
+
+```json
+{
+    "subscriptionId": "550e8400-e29b-41d4-a716-446655440001",
+    "comparisonId": "770e8400-e29b-41d4-a716-446655440002",
+    "timestamp": "2024-01-15T10:30:00Z",
+    "trigger": "file-change"
+}
+```
+
+#### ComparisonCompleted
+
+Emitted when a comparison completes successfully.
+
+```json
+{
+    "subscriptionId": "550e8400-e29b-41d4-a716-446655440001",
+    "comparisonId": "770e8400-e29b-41d4-a716-446655440002",
+    "timestamp": "2024-01-15T10:30:05Z",
+    "status": "has-differences",
+    "differenceCount": 3,
+    "duration": "PT5S"
+}
+```
+
+#### ComparisonFailed
+
+Emitted when a comparison fails due to an error.
+
+```json
+{
+    "subscriptionId": "550e8400-e29b-41d4-a716-446655440001",
+    "comparisonId": "770e8400-e29b-41d4-a716-446655440002",
+    "timestamp": "2024-01-15T10:30:05Z",
+    "error": {
+        "code": "DATABASE_CONNECTION_FAILED",
+        "message": "Failed to connect to database server"
+    }
+}
+```
+
+#### DifferencesDetected
+
+Emitted when differences are found during a comparison.
+
+```json
+{
+    "subscriptionId": "550e8400-e29b-41d4-a716-446655440001",
+    "comparisonId": "770e8400-e29b-41d4-a716-446655440002",
+    "timestamp": "2024-01-15T10:30:05Z",
+    "summary": {
+        "totalDifferences": 3,
+        "additions": 1,
+        "modifications": 1,
+        "deletions": 1
+    },
+    "differenceIds": ["diff-001", "diff-002", "diff-003"]
+}
+```
+
+#### SubscriptionCreated
+
+Emitted when a new subscription is created.
+
+```json
+{
+    "subscriptionId": "550e8400-e29b-41d4-a716-446655440001",
+    "timestamp": "2024-01-15T10:30:00Z",
+    "subscriptionName": "My Database Subscription"
+}
+```
+
+#### SubscriptionDeleted
+
+Emitted when a subscription is deleted.
+
+```json
+{
+    "subscriptionId": "550e8400-e29b-41d4-a716-446655440001",
+    "timestamp": "2024-01-15T10:30:00Z",
+    "subscriptionName": "My Database Subscription",
+    "deleteHistory": true
+}
+```
+
+#### SubscriptionStateChanged
+
+Emitted when a subscription's state changes (paused, resumed, etc.).
+
+```json
+{
+    "subscriptionId": "550e8400-e29b-41d4-a716-446655440001",
+    "timestamp": "2024-01-15T10:30:00Z",
+    "previousState": "active",
+    "newState": "paused",
+    "reason": "User requested pause"
+}
+```
+
+#### ServiceShuttingDown
+
+Emitted to all connected clients when the service is shutting down.
+
+```json
+{
+    "timestamp": "2024-01-15T10:30:00Z",
+    "reason": "Application shutdown requested",
+    "gracePeriodSeconds": 5
+}
+```
+
+### 12.5 Testing SignalR Integration
+
+The test suite includes SignalR integration tests in `SignalRHubTests.cs`:
+
+```bash
+# Run SignalR tests only
+dotnet test --filter "FullyQualifiedName~SignalRHubTests"
+```
+
+Tests cover:
+- Hub connection lifecycle (connect/disconnect)
+- Group management (JoinSubscription, LeaveSubscription, JoinAll, LeaveAll)
+- Multiple clients joining the same subscription
+- Single client joining multiple subscriptions
+- InMemoryConnectionTracker functionality
+
+---
+
+## 13. Summary
+
+With Milestones 7, 8, and 9, you can:
+
+- Register subscriptions pairing databases with SQL project folders
+- Trigger comparisons and browse history
+- Inspect per-object differences with scripts and diffs
+- Benefit from automatic change detection via file watching and database polling
+- Monitor subscription health status
+- Receive real-time notifications via SignalR for all service events
+- Handle graceful shutdown notifications for connected clients

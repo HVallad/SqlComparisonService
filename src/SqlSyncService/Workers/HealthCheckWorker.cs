@@ -1,4 +1,3 @@
-using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Options;
 using SqlSyncService.Configuration;
 using SqlSyncService.Contracts.Connections;
@@ -6,6 +5,7 @@ using SqlSyncService.Contracts.Folders;
 using SqlSyncService.Domain.Subscriptions;
 using SqlSyncService.Persistence;
 using SqlSyncService.Realtime;
+using SqlSyncService.Realtime.Events;
 using SqlSyncService.Services;
 
 namespace SqlSyncService.Workers;
@@ -68,7 +68,7 @@ public sealed class HealthCheckWorker : BackgroundService
         var subscriptionRepository = scope.ServiceProvider.GetRequiredService<ISubscriptionRepository>();
         var connectionTester = scope.ServiceProvider.GetRequiredService<IDatabaseConnectionTester>();
         var folderValidator = scope.ServiceProvider.GetRequiredService<IFolderValidator>();
-        var hubContext = scope.ServiceProvider.GetRequiredService<IHubContext<SyncHub>>();
+        var eventPublisher = scope.ServiceProvider.GetRequiredService<IRealtimeEventPublisher>();
 
         var subscriptions = await subscriptionRepository.GetAllAsync(cancellationToken);
 
@@ -88,17 +88,50 @@ public sealed class HealthCheckWorker : BackgroundService
             // Emit SignalR event if status changed
             if (subscription.Health.OverallStatus != previousStatus)
             {
-                await hubContext.Clients.All.SendAsync(
-                    "SubscriptionHealthChanged",
-                    new
+                // Build issues list from current health state
+                var issues = new List<SubscriptionHealthIssue>();
+                var sinceTime = subscription.Health.LastCheckedAt != default
+                    ? new DateTimeOffset(subscription.Health.LastCheckedAt, TimeSpan.Zero)
+                    : DateTimeOffset.UtcNow;
+
+                if (!subscription.Health.DatabaseConnectable)
+                {
+                    issues.Add(new SubscriptionHealthIssue
+                    {
+                        Type = "database",
+                        Message = subscription.Health.LastError ?? "Database connection failed",
+                        Since = sinceTime
+                    });
+                }
+                if (!subscription.Health.FolderAccessible)
+                {
+                    issues.Add(new SubscriptionHealthIssue
+                    {
+                        Type = "folder",
+                        Message = subscription.Health.LastError ?? "Folder not accessible",
+                        Since = sinceTime
+                    });
+                }
+                if (!subscription.Health.SqlFilesPresent)
+                {
+                    issues.Add(new SubscriptionHealthIssue
+                    {
+                        Type = "files",
+                        Message = "No SQL files present in folder",
+                        Since = sinceTime
+                    });
+                }
+
+                await eventPublisher.PublishToSubscriptionAsync(
+                    subscription.Id,
+                    RealtimeEventNames.SubscriptionHealthChanged,
+                    new SubscriptionHealthChangedEvent
                     {
                         SubscriptionId = subscription.Id,
-                        PreviousStatus = previousStatus.ToString(),
-                        CurrentStatus = subscription.Health.OverallStatus.ToString(),
-                        subscription.Health.DatabaseConnectable,
-                        subscription.Health.FolderAccessible,
-                        subscription.Health.SqlFilesPresent,
-                        subscription.Health.LastError
+                        Timestamp = DateTimeOffset.UtcNow,
+                        PreviousHealth = previousStatus.ToString().ToLowerInvariant(),
+                        NewHealth = subscription.Health.OverallStatus.ToString().ToLowerInvariant(),
+                        Issues = issues
                     },
                     cancellationToken);
 

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Linq;
+using System.Xml;
 using Microsoft.Extensions.Options;
 using SqlSyncService.Configuration;
 using SqlSyncService.DacFx;
@@ -8,22 +9,38 @@ using SqlSyncService.Domain.Changes;
 using SqlSyncService.Domain.Comparisons;
 using SqlSyncService.Domain.Subscriptions;
 using SqlSyncService.Persistence;
+using SqlSyncService.Realtime;
+using SqlSyncService.Realtime.Events;
 
 namespace SqlSyncService.Services;
 
 public interface IComparisonOrchestrator
 {
-    Task<ComparisonResult> RunComparisonAsync(Guid subscriptionId, bool fullComparison, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// Runs a full or incremental comparison for a subscription.
+    /// </summary>
+    /// <param name="subscriptionId">The subscription ID.</param>
+    /// <param name="fullComparison">If true, rebuilds the snapshot from scratch.</param>
+    /// <param name="trigger">The trigger source (e.g., "manual", "reconciliation", "database-change", "file-change", "subscription-created").</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task<ComparisonResult> RunComparisonAsync(Guid subscriptionId, bool fullComparison, string trigger, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Compares a single database object against its file definition.
     /// Always fetches fresh data from the database for the specified object.
     /// </summary>
+    /// <param name="subscriptionId">The subscription ID.</param>
+    /// <param name="schemaName">The schema name.</param>
+    /// <param name="objectName">The object name.</param>
+    /// <param name="objectType">The object type.</param>
+    /// <param name="trigger">The trigger source (e.g., "manual", "database-change").</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
     Task<SingleObjectComparisonResult> CompareObjectAsync(
         Guid subscriptionId,
         string schemaName,
         string objectName,
         SqlObjectType objectType,
+        string trigger,
         CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -33,11 +50,13 @@ public interface IComparisonOrchestrator
     /// </summary>
     /// <param name="subscriptionId">The subscription ID.</param>
     /// <param name="changedObjects">The objects that changed and need to be re-queried.</param>
+    /// <param name="trigger">The trigger source (e.g., "database-change", "file-change").</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>A full comparison result including all differences.</returns>
     Task<ComparisonResult> CompareObjectsAsync(
         Guid subscriptionId,
         IEnumerable<ObjectIdentifier> changedObjects,
+        string trigger,
         CancellationToken cancellationToken = default);
 }
 
@@ -69,6 +88,7 @@ public sealed class ComparisonOrchestrator : IComparisonOrchestrator
     private readonly IDatabaseSchemaReader _schemaReader;
     private readonly IFileModelBuilder _fileModelBuilder;
     private readonly ISchemaComparer _schemaComparer;
+    private readonly IRealtimeEventPublisher _eventPublisher;
     private readonly ILogger<ComparisonOrchestrator> _logger;
 
     public ComparisonOrchestrator(
@@ -79,6 +99,7 @@ public sealed class ComparisonOrchestrator : IComparisonOrchestrator
         IDatabaseSchemaReader schemaReader,
         IFileModelBuilder fileModelBuilder,
         ISchemaComparer schemaComparer,
+        IRealtimeEventPublisher eventPublisher,
         IOptions<ServiceConfiguration> options,
         ILogger<ComparisonOrchestrator> logger)
     {
@@ -89,6 +110,7 @@ public sealed class ComparisonOrchestrator : IComparisonOrchestrator
         _schemaReader = schemaReader ?? throw new ArgumentNullException(nameof(schemaReader));
         _fileModelBuilder = fileModelBuilder ?? throw new ArgumentNullException(nameof(fileModelBuilder));
         _schemaComparer = schemaComparer ?? throw new ArgumentNullException(nameof(schemaComparer));
+        _eventPublisher = eventPublisher ?? throw new ArgumentNullException(nameof(eventPublisher));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
         if (_semaphore == null)
@@ -104,10 +126,12 @@ public sealed class ComparisonOrchestrator : IComparisonOrchestrator
         }
     }
 
-    public async Task<ComparisonResult> RunComparisonAsync(Guid subscriptionId, bool fullComparison, CancellationToken cancellationToken = default)
+    public async Task<ComparisonResult> RunComparisonAsync(Guid subscriptionId, bool fullComparison, string trigger, CancellationToken cancellationToken = default)
     {
         if (subscriptionId == Guid.Empty) throw new ArgumentException("SubscriptionId must not be empty.", nameof(subscriptionId));
+        if (string.IsNullOrWhiteSpace(trigger)) throw new ArgumentException("Trigger must not be empty.", nameof(trigger));
 
+        var comparisonId = Guid.NewGuid();
         var semaphore = _semaphore ?? throw new InvalidOperationException("Comparison semaphore is not initialized.");
         var acquired = false;
 
@@ -121,6 +145,24 @@ public sealed class ComparisonOrchestrator : IComparisonOrchestrator
 
             var subscription = await _subscriptionRepository.GetByIdAsync(subscriptionId, cancellationToken).ConfigureAwait(false)
                     ?? throw new SubscriptionNotFoundException(subscriptionId);
+
+            // Estimate object count for the started event
+            var cachedSnapshot = await _schemaSnapshotRepository.GetLatestForSubscriptionAsync(subscriptionId, cancellationToken).ConfigureAwait(false);
+            var estimatedObjects = cachedSnapshot?.Objects.Count ?? 0;
+
+            // Emit ComparisonStarted event
+            await _eventPublisher.PublishToSubscriptionAsync(
+                subscriptionId,
+                RealtimeEventNames.ComparisonStarted,
+                new ComparisonStartedEvent
+                {
+                    SubscriptionId = subscriptionId,
+                    ComparisonId = comparisonId,
+                    StartedAt = DateTimeOffset.UtcNow,
+                    Trigger = trigger,
+                    EstimatedObjects = estimatedObjects
+                },
+                cancellationToken).ConfigureAwait(false);
 
             var stopwatch = Stopwatch.StartNew();
 
@@ -136,7 +178,6 @@ public sealed class ComparisonOrchestrator : IComparisonOrchestrator
             else
             {
                 _logger.LogDebug("Starting non-full comparison for subscription {SubscriptionId} - attempting to use cached snapshot.", subscriptionId);
-                var cachedSnapshot = await _schemaSnapshotRepository.GetLatestForSubscriptionAsync(subscriptionId, cancellationToken).ConfigureAwait(false);
                 if (cachedSnapshot is not null)
                 {
                     _logger.LogInformation(
@@ -169,7 +210,7 @@ public sealed class ComparisonOrchestrator : IComparisonOrchestrator
 
             var result = new ComparisonResult
             {
-                Id = Guid.NewGuid(),
+                Id = comparisonId,
                 SubscriptionId = subscriptionId,
                 ComparedAt = DateTime.UtcNow,
                 Duration = stopwatch.Elapsed,
@@ -202,7 +243,83 @@ public sealed class ComparisonOrchestrator : IComparisonOrchestrator
             subscription.LastComparedAt = result.ComparedAt;
             await _subscriptionRepository.UpdateAsync(subscription, cancellationToken).ConfigureAwait(false);
 
+            // Emit DifferencesDetected event if there are differences
+            if (differences.Count > 0)
+            {
+                var addCount = differences.Count(d => d.DifferenceType == DifferenceType.Add);
+                var deleteCount = differences.Count(d => d.DifferenceType == DifferenceType.Delete);
+                var changeCount = differences.Count(d => d.DifferenceType == DifferenceType.Modify || d.DifferenceType == DifferenceType.Rename);
+
+                await _eventPublisher.PublishToSubscriptionAsync(
+                    subscriptionId,
+                    RealtimeEventNames.DifferencesDetected,
+                    new DifferencesDetectedEvent
+                    {
+                        SubscriptionId = subscriptionId,
+                        Timestamp = DateTimeOffset.UtcNow,
+                        ComparisonId = comparisonId,
+                        Trigger = trigger,
+                        DifferenceCount = differences.Count,
+                        Summary = new DifferencesSummary
+                        {
+                            ByAction = new DifferencesByActionSummary
+                            {
+                                Add = addCount,
+                                Delete = deleteCount,
+                                Change = changeCount
+                            }
+                        }
+                    },
+                    cancellationToken).ConfigureAwait(false);
+            }
+
+            // Emit ComparisonCompleted event
+            await _eventPublisher.PublishToSubscriptionAsync(
+                subscriptionId,
+                RealtimeEventNames.ComparisonCompleted,
+                new ComparisonCompletedEvent
+                {
+                    SubscriptionId = subscriptionId,
+                    ComparisonId = comparisonId,
+                    CompletedAt = DateTimeOffset.UtcNow,
+                    Duration = XmlConvert.ToString(stopwatch.Elapsed),
+                    DifferenceCount = differences.Count,
+                    Status = status == ComparisonStatus.Synchronized ? "synchronized" : "has-differences"
+                },
+                cancellationToken).ConfigureAwait(false);
+
             return result;
+        }
+        catch (ComparisonInProgressException)
+        {
+            // Re-throw without emitting failure event (this is expected behavior)
+            throw;
+        }
+        catch (SubscriptionNotFoundException)
+        {
+            // Re-throw without emitting failure event (subscription doesn't exist)
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // Emit ComparisonFailed event for unexpected errors
+            await _eventPublisher.PublishToSubscriptionAsync(
+                subscriptionId,
+                RealtimeEventNames.ComparisonFailed,
+                new ComparisonFailedEvent
+                {
+                    SubscriptionId = subscriptionId,
+                    ComparisonId = comparisonId,
+                    FailedAt = DateTimeOffset.UtcNow,
+                    Error = new ComparisonError
+                    {
+                        Code = "COMPARISON_ERROR",
+                        Message = ex.Message
+                    }
+                },
+                cancellationToken).ConfigureAwait(false);
+
+            throw;
         }
         finally
         {
@@ -218,10 +335,12 @@ public sealed class ComparisonOrchestrator : IComparisonOrchestrator
         string schemaName,
         string objectName,
         SqlObjectType objectType,
+        string trigger,
         CancellationToken cancellationToken = default)
     {
         if (subscriptionId == Guid.Empty) throw new ArgumentException("SubscriptionId must not be empty.", nameof(subscriptionId));
         if (string.IsNullOrWhiteSpace(objectName)) throw new ArgumentException("ObjectName must not be empty.", nameof(objectName));
+        if (string.IsNullOrWhiteSpace(trigger)) throw new ArgumentException("Trigger must not be empty.", nameof(trigger));
 
         var startTime = DateTime.UtcNow;
 
@@ -432,18 +551,21 @@ public sealed class ComparisonOrchestrator : IComparisonOrchestrator
     public async Task<ComparisonResult> CompareObjectsAsync(
         Guid subscriptionId,
         IEnumerable<ObjectIdentifier> changedObjects,
+        string trigger,
         CancellationToken cancellationToken = default)
     {
         if (subscriptionId == Guid.Empty) throw new ArgumentException("SubscriptionId must not be empty.", nameof(subscriptionId));
+        if (string.IsNullOrWhiteSpace(trigger)) throw new ArgumentException("Trigger must not be empty.", nameof(trigger));
         ArgumentNullException.ThrowIfNull(changedObjects);
 
         var objectList = changedObjects.ToList();
         if (objectList.Count == 0)
         {
             // No changes - just return current state via regular comparison
-            return await RunComparisonAsync(subscriptionId, fullComparison: false, cancellationToken).ConfigureAwait(false);
+            return await RunComparisonAsync(subscriptionId, fullComparison: false, trigger, cancellationToken).ConfigureAwait(false);
         }
 
+        var comparisonId = Guid.NewGuid();
         var semaphore = _semaphore ?? throw new InvalidOperationException("Comparison semaphore is not initialized.");
         var acquired = false;
 
@@ -457,6 +579,20 @@ public sealed class ComparisonOrchestrator : IComparisonOrchestrator
 
             var subscription = await _subscriptionRepository.GetByIdAsync(subscriptionId, cancellationToken).ConfigureAwait(false)
                 ?? throw new SubscriptionNotFoundException(subscriptionId);
+
+            // Emit ComparisonStarted event
+            await _eventPublisher.PublishToSubscriptionAsync(
+                subscriptionId,
+                RealtimeEventNames.ComparisonStarted,
+                new ComparisonStartedEvent
+                {
+                    SubscriptionId = subscriptionId,
+                    ComparisonId = comparisonId,
+                    StartedAt = DateTimeOffset.UtcNow,
+                    Trigger = trigger,
+                    EstimatedObjects = objectList.Count
+                },
+                cancellationToken).ConfigureAwait(false);
 
             var stopwatch = Stopwatch.StartNew();
 
@@ -549,7 +685,7 @@ public sealed class ComparisonOrchestrator : IComparisonOrchestrator
 
             var result = new ComparisonResult
             {
-                Id = Guid.NewGuid(),
+                Id = comparisonId,
                 SubscriptionId = subscriptionId,
                 ComparedAt = DateTime.UtcNow,
                 Duration = stopwatch.Elapsed,
@@ -578,7 +714,80 @@ public sealed class ComparisonOrchestrator : IComparisonOrchestrator
                 objectList.Count, stopwatch.ElapsedMilliseconds,
                 status, differences.Count);
 
+            // Emit DifferencesDetected event if there are differences
+            if (differences.Count > 0)
+            {
+                var addCountObjects = differences.Count(d => d.DifferenceType == DifferenceType.Add);
+                var deleteCountObjects = differences.Count(d => d.DifferenceType == DifferenceType.Delete);
+                var changeCountObjects = differences.Count(d => d.DifferenceType == DifferenceType.Modify || d.DifferenceType == DifferenceType.Rename);
+
+                await _eventPublisher.PublishToSubscriptionAsync(
+                    subscriptionId,
+                    RealtimeEventNames.DifferencesDetected,
+                    new DifferencesDetectedEvent
+                    {
+                        SubscriptionId = subscriptionId,
+                        Timestamp = DateTimeOffset.UtcNow,
+                        ComparisonId = comparisonId,
+                        Trigger = trigger,
+                        DifferenceCount = differences.Count,
+                        Summary = new DifferencesSummary
+                        {
+                            ByAction = new DifferencesByActionSummary
+                            {
+                                Add = addCountObjects,
+                                Delete = deleteCountObjects,
+                                Change = changeCountObjects
+                            }
+                        }
+                    },
+                    cancellationToken).ConfigureAwait(false);
+            }
+
+            // Emit ComparisonCompleted event
+            await _eventPublisher.PublishToSubscriptionAsync(
+                subscriptionId,
+                RealtimeEventNames.ComparisonCompleted,
+                new ComparisonCompletedEvent
+                {
+                    SubscriptionId = subscriptionId,
+                    ComparisonId = comparisonId,
+                    CompletedAt = DateTimeOffset.UtcNow,
+                    Duration = XmlConvert.ToString(stopwatch.Elapsed),
+                    DifferenceCount = differences.Count,
+                    Status = status == ComparisonStatus.Synchronized ? "synchronized" : "has-differences"
+                },
+                cancellationToken).ConfigureAwait(false);
+
             return result;
+        }
+        catch (ComparisonInProgressException)
+        {
+            throw;
+        }
+        catch (SubscriptionNotFoundException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            await _eventPublisher.PublishToSubscriptionAsync(
+                subscriptionId,
+                RealtimeEventNames.ComparisonFailed,
+                new ComparisonFailedEvent
+                {
+                    SubscriptionId = subscriptionId,
+                    ComparisonId = comparisonId,
+                    FailedAt = DateTimeOffset.UtcNow,
+                    Error = new ComparisonError
+                    {
+                        Code = "COMPARISON_ERROR",
+                        Message = ex.Message
+                    }
+                },
+                cancellationToken).ConfigureAwait(false);
+
+            throw;
         }
         finally
         {

@@ -1193,7 +1193,7 @@ public class SubscriptionsControllerTests : IClassFixture<WebApplicationFactory<
             };
         }
 
-        public Task<ComparisonResult> RunComparisonAsync(Guid subscriptionId, bool fullComparison, CancellationToken cancellationToken = default)
+        public Task<ComparisonResult> RunComparisonAsync(Guid subscriptionId, bool fullComparison, string trigger, CancellationToken cancellationToken = default)
         {
             if (_exceptionToThrow is not null)
             {
@@ -1209,6 +1209,7 @@ public class SubscriptionsControllerTests : IClassFixture<WebApplicationFactory<
             string schemaName,
             string objectName,
             SqlObjectType objectType,
+            string trigger,
             CancellationToken cancellationToken = default)
         {
             if (_exceptionToThrow is not null)
@@ -1232,6 +1233,7 @@ public class SubscriptionsControllerTests : IClassFixture<WebApplicationFactory<
         public Task<ComparisonResult> CompareObjectsAsync(
             Guid subscriptionId,
             IEnumerable<SqlSyncService.Domain.Changes.ObjectIdentifier> changedObjects,
+            string trigger,
             CancellationToken cancellationToken = default)
         {
             if (_exceptionToThrow is not null)

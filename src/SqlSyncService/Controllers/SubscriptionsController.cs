@@ -294,7 +294,7 @@ public sealed class SubscriptionsController : ControllerBase
         var fullComparison = request?.ForceFullComparison ?? false;
 
         var result = await _comparisonOrchestrator
-            .RunComparisonAsync(id, fullComparison, cancellationToken)
+            .RunComparisonAsync(id, fullComparison, trigger: "manual", cancellationToken)
             .ConfigureAwait(false);
 
         var startedAt = result.ComparedAt - result.Duration;
@@ -348,7 +348,7 @@ public sealed class SubscriptionsController : ControllerBase
         try
         {
             var result = await _comparisonOrchestrator
-                .CompareObjectAsync(id, request.SchemaName, request.ObjectName, request.ObjectType, cancellationToken)
+                .CompareObjectAsync(id, request.SchemaName, request.ObjectName, request.ObjectType, trigger: "manual", cancellationToken)
                 .ConfigureAwait(false);
 
             var response = new CompareObjectResponse

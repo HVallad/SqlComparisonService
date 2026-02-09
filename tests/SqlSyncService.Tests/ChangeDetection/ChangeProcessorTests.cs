@@ -1,11 +1,9 @@
-using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging;
 using SqlSyncService.ChangeDetection;
 using SqlSyncService.Domain.Changes;
 using SqlSyncService.Domain.Comparisons;
 using SqlSyncService.Domain.Subscriptions;
 using SqlSyncService.Persistence;
-using SqlSyncService.Realtime;
 using SqlSyncService.Services;
 
 namespace SqlSyncService.Tests.ChangeDetection;
@@ -15,7 +13,6 @@ public class ChangeProcessorTests
     private readonly MockSubscriptionRepository _subscriptionRepo = new();
     private readonly MockPendingChangeRepository _pendingChangeRepo = new();
     private readonly MockComparisonOrchestrator _orchestrator = new();
-    private readonly MockHubContext _hubContext = new();
     private readonly ChangeProcessor _processor;
 
     public ChangeProcessorTests()
@@ -25,7 +22,6 @@ public class ChangeProcessorTests
             _subscriptionRepo,
             _pendingChangeRepo,
             _orchestrator,
-            _hubContext,
             logger);
     }
 
@@ -42,21 +38,6 @@ public class ChangeProcessorTests
 
         // Assert
         Assert.Equal(3, _pendingChangeRepo.AddedChanges.Count);
-    }
-
-    [Fact]
-    public async Task ProcessBatchAsync_SendsSignalRNotification()
-    {
-        // Arrange
-        var subscriptionId = Guid.NewGuid();
-        _subscriptionRepo.Subscription = CreateSubscription(subscriptionId, SubscriptionState.Active);
-        var batch = CreateBatch(subscriptionId, 2);
-
-        // Act
-        await _processor.ProcessBatchAsync(batch);
-
-        // Assert
-        Assert.True(_hubContext.ChangesDetectedSent);
     }
 
     [Fact]
@@ -151,7 +132,6 @@ public class ChangeProcessorTests
 
         // Assert
         Assert.Empty(_pendingChangeRepo.AddedChanges);
-        Assert.False(_hubContext.ChangesDetectedSent);
     }
 
     [Fact]
@@ -293,9 +273,10 @@ public class ChangeProcessorTests
     {
         public bool ComparisonTriggered { get; private set; }
         public Guid? LastSubscriptionId { get; private set; }
+        public string? LastTrigger { get; private set; }
         public bool ThrowComparisonInProgress { get; set; }
 
-        public Task<ComparisonResult> RunComparisonAsync(Guid subscriptionId, bool fullComparison, CancellationToken cancellationToken = default)
+        public Task<ComparisonResult> RunComparisonAsync(Guid subscriptionId, bool fullComparison, string trigger, CancellationToken cancellationToken = default)
         {
             if (ThrowComparisonInProgress)
             {
@@ -304,6 +285,7 @@ public class ChangeProcessorTests
 
             ComparisonTriggered = true;
             LastSubscriptionId = subscriptionId;
+            LastTrigger = trigger;
             return Task.FromResult(new ComparisonResult
             {
                 Id = Guid.NewGuid(),
@@ -317,8 +299,10 @@ public class ChangeProcessorTests
             string schemaName,
             string objectName,
             SqlObjectType objectType,
+            string trigger,
             CancellationToken cancellationToken = default)
         {
+            LastTrigger = trigger;
             return Task.FromResult(new SingleObjectComparisonResult
             {
                 SubscriptionId = subscriptionId,
@@ -335,6 +319,7 @@ public class ChangeProcessorTests
         public Task<ComparisonResult> CompareObjectsAsync(
             Guid subscriptionId,
             IEnumerable<SqlSyncService.Domain.Changes.ObjectIdentifier> changedObjects,
+            string trigger,
             CancellationToken cancellationToken = default)
         {
             if (ThrowComparisonInProgress)
@@ -344,52 +329,13 @@ public class ChangeProcessorTests
 
             ComparisonTriggered = true;
             LastSubscriptionId = subscriptionId;
+            LastTrigger = trigger;
             return Task.FromResult(new ComparisonResult
             {
                 Id = Guid.NewGuid(),
                 SubscriptionId = subscriptionId,
                 Status = ComparisonStatus.Synchronized
             });
-        }
-    }
-
-    private sealed class MockHubContext : IHubContext<SyncHub>
-    {
-        public bool ChangesDetectedSent { get; private set; }
-
-        public IHubClients Clients => new MockHubClients(this);
-
-        public IGroupManager Groups => throw new NotImplementedException();
-
-        private sealed class MockHubClients : IHubClients
-        {
-            private readonly MockHubContext _parent;
-            public MockHubClients(MockHubContext parent) => _parent = parent;
-
-            public IClientProxy All => new MockClientProxy(_parent);
-            public IClientProxy AllExcept(IReadOnlyList<string> excludedConnectionIds) => All;
-            public IClientProxy Client(string connectionId) => All;
-            public IClientProxy Clients(IReadOnlyList<string> connectionIds) => All;
-            public IClientProxy Group(string groupName) => All;
-            public IClientProxy Groups(IReadOnlyList<string> groupNames) => All;
-            public IClientProxy GroupExcept(string groupName, IReadOnlyList<string> excludedConnectionIds) => All;
-            public IClientProxy User(string userId) => All;
-            public IClientProxy Users(IReadOnlyList<string> userIds) => All;
-        }
-
-        private sealed class MockClientProxy : IClientProxy
-        {
-            private readonly MockHubContext _parent;
-            public MockClientProxy(MockHubContext parent) => _parent = parent;
-
-            public Task SendCoreAsync(string method, object?[] args, CancellationToken cancellationToken = default)
-            {
-                if (method == "ChangesDetected")
-                {
-                    _parent.ChangesDetectedSent = true;
-                }
-                return Task.CompletedTask;
-            }
         }
     }
 }

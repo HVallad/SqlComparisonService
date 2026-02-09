@@ -181,7 +181,17 @@ public class HealthCheckWorkerTests
         services.AddSingleton<IDatabaseConnectionTester>(connectionTester);
         services.AddSingleton<IFolderValidator>(folderValidator);
         services.AddSingleton<IHubContext<SyncHub>>(new MockHubContext());
+        services.AddSingleton<IRealtimeEventPublisher>(new NullRealtimeEventPublisher());
         return services.BuildServiceProvider();
+    }
+
+    private sealed class NullRealtimeEventPublisher : IRealtimeEventPublisher
+    {
+        public Task PublishToSubscriptionAsync<TEvent>(Guid subscriptionId, string eventName, TEvent payload, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+
+        public Task PublishToAllSubscriptionsAsync<TEvent>(string eventName, TEvent payload, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
     }
 
     private static HealthCheckWorker CreateWorker(IServiceProvider services)

@@ -204,7 +204,7 @@ public class ReconciliationWorkerTests
     {
         public List<(Guid SubscriptionId, bool FullComparison)> RunComparisonCalls { get; } = new();
 
-        public Task<ComparisonResult> RunComparisonAsync(Guid subscriptionId, bool fullComparison, CancellationToken cancellationToken = default)
+        public Task<ComparisonResult> RunComparisonAsync(Guid subscriptionId, bool fullComparison, string trigger, CancellationToken cancellationToken = default)
         {
             RunComparisonCalls.Add((subscriptionId, fullComparison));
             return Task.FromResult(new ComparisonResult
@@ -216,12 +216,12 @@ public class ReconciliationWorkerTests
             });
         }
 
-        public Task<SingleObjectComparisonResult> CompareObjectAsync(Guid subscriptionId, string schemaName, string objectName, SqlObjectType objectType, CancellationToken cancellationToken = default)
+        public Task<SingleObjectComparisonResult> CompareObjectAsync(Guid subscriptionId, string schemaName, string objectName, SqlObjectType objectType, string trigger, CancellationToken cancellationToken = default)
         {
             throw new NotImplementedException();
         }
 
-        public Task<ComparisonResult> CompareObjectsAsync(Guid subscriptionId, IEnumerable<ObjectIdentifier> changedObjects, CancellationToken cancellationToken = default)
+        public Task<ComparisonResult> CompareObjectsAsync(Guid subscriptionId, IEnumerable<ObjectIdentifier> changedObjects, string trigger, CancellationToken cancellationToken = default)
         {
             throw new NotImplementedException();
         }

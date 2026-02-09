@@ -133,7 +133,7 @@ public sealed class ReconciliationWorker : BackgroundService
             subscription.Id);
 
         // Run full comparison
-        await comparisonOrchestrator.RunComparisonAsync(subscription.Id, fullComparison: true, cancellationToken);
+        await comparisonOrchestrator.RunComparisonAsync(subscription.Id, fullComparison: true, trigger: "reconciliation", cancellationToken);
 
         // Process accumulated pending changes and mark as processed
         var pendingChanges = await pendingChangeRepository.GetPendingForSubscriptionAsync(

@@ -7,6 +7,7 @@ using SqlSyncService.Domain.Caching;
 using SqlSyncService.Domain.Comparisons;
 using SqlSyncService.Domain.Subscriptions;
 using SqlSyncService.Persistence;
+using SqlSyncService.Realtime;
 using SqlSyncService.Services;
 using System.Linq;
 
@@ -14,6 +15,17 @@ namespace SqlSyncService.Tests.Services;
 
 public class ComparisonOrchestratorTests
 {
+    private static readonly IRealtimeEventPublisher NullEventPublisher = new NullRealtimeEventPublisher();
+
+    private sealed class NullRealtimeEventPublisher : IRealtimeEventPublisher
+    {
+        public Task PublishToSubscriptionAsync<TEvent>(Guid subscriptionId, string eventName, TEvent payload, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+
+        public Task PublishToAllSubscriptionsAsync<TEvent>(string eventName, TEvent payload, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+    }
+
     [Fact]
     public async Task RunComparisonAsync_FullComparison_Persists_Snapshot_And_Result()
     {
@@ -64,10 +76,10 @@ public class ComparisonOrchestratorTests
         var comparer = new StubSchemaComparer { DifferencesToReturn = differences };
         var options = CreateOptions(1);
 
-        var orchestrator = new ComparisonOrchestrator(subscriptions, snapshots, history, dbBuilder, new StubDatabaseSchemaReader(), fileBuilder, comparer, options, NullLogger<ComparisonOrchestrator>.Instance);
+        var orchestrator = new ComparisonOrchestrator(subscriptions, snapshots, history, dbBuilder, new StubDatabaseSchemaReader(), fileBuilder, comparer, NullEventPublisher, options, NullLogger<ComparisonOrchestrator>.Instance);
 
         // Act
-        var result = await orchestrator.RunComparisonAsync(subscriptionId, fullComparison: true);
+        var result = await orchestrator.RunComparisonAsync(subscriptionId, fullComparison: true, trigger: "test");
 
         // Assert
         Assert.NotEqual(Guid.Empty, result.Id);
@@ -158,10 +170,10 @@ public class ComparisonOrchestratorTests
         var comparer = new StubSchemaComparer { DifferencesToReturn = Array.Empty<SchemaDifference>() };
         var options = CreateOptions(1);
 
-        var orchestrator = new ComparisonOrchestrator(subscriptions, snapshots, history, dbBuilder, new StubDatabaseSchemaReader(), fileBuilder, comparer, options, NullLogger<ComparisonOrchestrator>.Instance);
+        var orchestrator = new ComparisonOrchestrator(subscriptions, snapshots, history, dbBuilder, new StubDatabaseSchemaReader(), fileBuilder, comparer, NullEventPublisher, options, NullLogger<ComparisonOrchestrator>.Instance);
 
         // Act
-        var result = await orchestrator.RunComparisonAsync(subscriptionId, fullComparison: true);
+        var result = await orchestrator.RunComparisonAsync(subscriptionId, fullComparison: true, trigger: "test");
 
         // Assert
         Assert.Equal(ComparisonStatus.Synchronized, result.Status);
@@ -217,10 +229,10 @@ public class ComparisonOrchestratorTests
         var comparer = new StubSchemaComparer { DifferencesToReturn = Array.Empty<SchemaDifference>() };
         var options = CreateOptions(1);
 
-        var orchestrator = new ComparisonOrchestrator(subscriptions, snapshots, history, dbBuilder, new StubDatabaseSchemaReader(), fileBuilder, comparer, options, NullLogger<ComparisonOrchestrator>.Instance);
+        var orchestrator = new ComparisonOrchestrator(subscriptions, snapshots, history, dbBuilder, new StubDatabaseSchemaReader(), fileBuilder, comparer, NullEventPublisher, options, NullLogger<ComparisonOrchestrator>.Instance);
 
         // Act
-        var result = await orchestrator.RunComparisonAsync(subscriptionId, fullComparison: false);
+        var result = await orchestrator.RunComparisonAsync(subscriptionId, fullComparison: false, trigger: "test");
 
         // Assert
         Assert.Equal(ComparisonStatus.Synchronized, result.Status);
@@ -549,11 +561,11 @@ public class ComparisonOrchestratorTests
         };
 
         var orchestrator = new ComparisonOrchestrator(
-            subscriptions, snapshots, history, dbBuilder, schemaReader, fileBuilder, new StubSchemaComparer(), CreateOptions(1), NullLogger<ComparisonOrchestrator>.Instance);
+            subscriptions, snapshots, history, dbBuilder, schemaReader, fileBuilder, new StubSchemaComparer(), NullEventPublisher, CreateOptions(1), NullLogger<ComparisonOrchestrator>.Instance);
 
         // Act
         var result = await orchestrator.CompareObjectAsync(
-            subscriptionId, "dbo", "TestProc", SqlObjectType.StoredProcedure);
+            subscriptionId, "dbo", "TestProc", SqlObjectType.StoredProcedure, trigger: "test");
 
         // Assert
         Assert.True(result.IsSynchronized);
@@ -643,11 +655,11 @@ public class ComparisonOrchestratorTests
 
         var orchestrator = new ComparisonOrchestrator(
             subscriptions, snapshots, history, dbBuilder, schemaReader, fileBuilder,
-            comparer, CreateOptions(1), NullLogger<ComparisonOrchestrator>.Instance);
+            comparer, NullEventPublisher, CreateOptions(1), NullLogger<ComparisonOrchestrator>.Instance);
 
         // Act - compare a single object, but expect history/summary for all objects
         var result = await orchestrator.CompareObjectAsync(
-            subscriptionId, "dbo", "Users", SqlObjectType.Table);
+            subscriptionId, "dbo", "Users", SqlObjectType.Table, trigger: "test");
 
         // Assert - per-object result
         Assert.True(result.IsSynchronized);
@@ -727,11 +739,11 @@ public class ComparisonOrchestratorTests
         };
 
         var orchestrator = new ComparisonOrchestrator(
-            subscriptions, snapshots, history, dbBuilder, schemaReader, fileBuilder, new StubSchemaComparer(), CreateOptions(1), NullLogger<ComparisonOrchestrator>.Instance);
+            subscriptions, snapshots, history, dbBuilder, schemaReader, fileBuilder, new StubSchemaComparer(), NullEventPublisher, CreateOptions(1), NullLogger<ComparisonOrchestrator>.Instance);
 
         // Act
         var result = await orchestrator.CompareObjectAsync(
-            subscriptionId, "dbo", "TestProc", SqlObjectType.StoredProcedure);
+            subscriptionId, "dbo", "TestProc", SqlObjectType.StoredProcedure, trigger: "test");
 
         // Assert
         Assert.False(result.IsSynchronized);
@@ -789,11 +801,11 @@ public class ComparisonOrchestratorTests
 
         var orchestrator = new ComparisonOrchestrator(
             subscriptions, snapshots, history,
-            dbBuilder, schemaReader, fileBuilder, new StubSchemaComparer(), CreateOptions(1), NullLogger<ComparisonOrchestrator>.Instance);
+            dbBuilder, schemaReader, fileBuilder, new StubSchemaComparer(), NullEventPublisher, CreateOptions(1), NullLogger<ComparisonOrchestrator>.Instance);
 
         // Act
         var result = await orchestrator.CompareObjectAsync(
-            subscriptionId, "dbo", "TestProc", SqlObjectType.StoredProcedure);
+            subscriptionId, "dbo", "TestProc", SqlObjectType.StoredProcedure, trigger: "test");
 
         // Assert
         Assert.False(result.IsSynchronized);
@@ -844,11 +856,11 @@ public class ComparisonOrchestratorTests
 
         var orchestrator = new ComparisonOrchestrator(
             subscriptions, new InMemorySchemaSnapshotRepository(), new InMemoryComparisonHistoryRepository(),
-            dbBuilder, new StubDatabaseSchemaReader(), fileBuilder, new StubSchemaComparer(), CreateOptions(1), NullLogger<ComparisonOrchestrator>.Instance);
+            dbBuilder, new StubDatabaseSchemaReader(), fileBuilder, new StubSchemaComparer(), NullEventPublisher, CreateOptions(1), NullLogger<ComparisonOrchestrator>.Instance);
 
         // Act
         var result = await orchestrator.CompareObjectAsync(
-            subscriptionId, "dbo", "NewProc", SqlObjectType.StoredProcedure);
+            subscriptionId, "dbo", "NewProc", SqlObjectType.StoredProcedure, trigger: "test");
 
         // Assert
         Assert.False(result.IsSynchronized);
@@ -884,11 +896,11 @@ public class ComparisonOrchestratorTests
 
         var orchestrator = new ComparisonOrchestrator(
             subscriptions, new InMemorySchemaSnapshotRepository(), new InMemoryComparisonHistoryRepository(),
-            dbBuilder, new StubDatabaseSchemaReader(), fileBuilder, new StubSchemaComparer(), CreateOptions(1), NullLogger<ComparisonOrchestrator>.Instance);
+            dbBuilder, new StubDatabaseSchemaReader(), fileBuilder, new StubSchemaComparer(), NullEventPublisher, CreateOptions(1), NullLogger<ComparisonOrchestrator>.Instance);
 
         // Act
         var result = await orchestrator.CompareObjectAsync(
-            subscriptionId, "dbo", "NonExistent", SqlObjectType.StoredProcedure);
+            subscriptionId, "dbo", "NonExistent", SqlObjectType.StoredProcedure, trigger: "test");
 
         // Assert
         Assert.True(result.IsSynchronized);
@@ -904,11 +916,11 @@ public class ComparisonOrchestratorTests
         var subscriptions = new InMemorySubscriptionRepository { Subscription = null };
         var orchestrator = new ComparisonOrchestrator(
             subscriptions, new InMemorySchemaSnapshotRepository(), new InMemoryComparisonHistoryRepository(),
-            new StubDatabaseModelBuilder(), new StubDatabaseSchemaReader(), new StubFileModelBuilder(), new StubSchemaComparer(), CreateOptions(1), NullLogger<ComparisonOrchestrator>.Instance);
+            new StubDatabaseModelBuilder(), new StubDatabaseSchemaReader(), new StubFileModelBuilder(), new StubSchemaComparer(), NullEventPublisher, CreateOptions(1), NullLogger<ComparisonOrchestrator>.Instance);
 
         // Act & Assert
         await Assert.ThrowsAsync<SubscriptionNotFoundException>(() =>
-            orchestrator.CompareObjectAsync(Guid.NewGuid(), "dbo", "Test", SqlObjectType.Table));
+            orchestrator.CompareObjectAsync(Guid.NewGuid(), "dbo", "Test", SqlObjectType.Table, trigger: "test"));
     }
 
     #endregion

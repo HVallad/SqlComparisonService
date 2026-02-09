@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using Microsoft.AspNetCore.SignalR;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Options;
 using SqlSyncService.ChangeDetection;
@@ -9,6 +8,7 @@ using SqlSyncService.Domain.Comparisons;
 using SqlSyncService.Domain.Subscriptions;
 using SqlSyncService.Persistence;
 using SqlSyncService.Realtime;
+using SqlSyncService.Realtime.Events;
 
 namespace SqlSyncService.Workers;
 
@@ -96,7 +96,7 @@ public sealed class DatabasePollingWorker : BackgroundService
     {
         using var scope = _serviceProvider.CreateScope();
         var subscriptionRepository = scope.ServiceProvider.GetRequiredService<ISubscriptionRepository>();
-        var hubContext = scope.ServiceProvider.GetRequiredService<IHubContext<SyncHub>>();
+        var eventPublisher = scope.ServiceProvider.GetRequiredService<IRealtimeEventPublisher>();
 
         var subscriptions = await subscriptionRepository.GetAllAsync(cancellationToken);
 
@@ -114,7 +114,7 @@ public sealed class DatabasePollingWorker : BackgroundService
 
             try
             {
-                await PollSubscriptionAsync(subscription, hubContext, cancellationToken);
+                await PollSubscriptionAsync(subscription, eventPublisher, cancellationToken);
             }
             catch (Exception ex)
             {
@@ -127,7 +127,7 @@ public sealed class DatabasePollingWorker : BackgroundService
 
     private async Task PollSubscriptionAsync(
         Subscription subscription,
-        IHubContext<SyncHub> hubContext,
+        IRealtimeEventPublisher eventPublisher,
         CancellationToken cancellationToken)
     {
         var objects = await GetDatabaseObjectsAsync(
@@ -182,23 +182,22 @@ public sealed class DatabasePollingWorker : BackgroundService
                     ChangeSource.Database,
                     ChangeType.Modified,
                     obj.ObjectType);
-            }
 
-            // Emit SignalR event with details about changed objects
-            await hubContext.Clients.All.SendAsync(
-                "DatabaseChanged",
-                new
-                {
-                    SubscriptionId = subscription.Id,
-                    ChangedObjects = changedObjects.Select(o => new
+                // Emit SignalR event for each changed object per the spec
+                await eventPublisher.PublishToSubscriptionAsync(
+                    subscription.Id,
+                    RealtimeEventNames.DatabaseChanged,
+                    new DatabaseChangedEvent
                     {
-                        o.SchemaName,
-                        o.ObjectName,
-                        ObjectType = o.ObjectType.ToString(),
-                        o.ModifyDate
-                    }).ToList()
-                },
-                cancellationToken);
+                        SubscriptionId = subscription.Id,
+                        Timestamp = DateTimeOffset.UtcNow,
+                        ChangeType = "modified",
+                        ObjectName = objectIdentifier,
+                        ObjectType = obj.ObjectType.ToString().ToLowerInvariant(),
+                        ModifiedBy = null // Not available from sys.objects polling
+                    },
+                    cancellationToken);
+            }
         }
         else if (isFirstPoll)
         {

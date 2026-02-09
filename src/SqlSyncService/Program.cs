@@ -1,5 +1,6 @@
 using LiteDB;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using SqlSyncService.ChangeDetection;
 using SqlSyncService.Configuration;
@@ -7,6 +8,7 @@ using SqlSyncService.Contracts;
 using SqlSyncService.Middleware;
 using SqlSyncService.Persistence;
 using SqlSyncService.Realtime;
+using SqlSyncService.Realtime.Events;
 using SqlSyncService.Services;
 using SqlSyncService.DacFx;
 using SqlSyncService.Workers;
@@ -99,8 +101,28 @@ builder.Services
         };
     });
 
-builder.Services.AddSignalR();
-builder.Services.AddHealthChecks();
+		builder.Services.AddSignalR();
+		builder.Services.AddSingleton<IConnectionTracker, InMemoryConnectionTracker>();
+		builder.Services.AddSingleton<IRealtimeEventPublisher, RealtimeEventPublisher>();
+	builder.Services.AddHealthChecks();
+
+// CORS configuration for development/testing
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowAll", policy =>
+    {
+        policy.AllowAnyOrigin()
+              .AllowAnyMethod()
+              .AllowAnyHeader();
+    });
+    options.AddPolicy("SignalR", policy =>
+    {
+        policy.SetIsOriginAllowed(_ => true)
+              .AllowAnyMethod()
+              .AllowAnyHeader()
+              .AllowCredentials();
+    });
+});
 
 // Application services
 builder.Services.AddScoped<IDatabaseConnectionTester, DatabaseConnectionTester>();
@@ -142,12 +164,47 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
+// Enable CORS - must be before authorization and endpoint mapping
+app.UseCors("AllowAll");
+
 app.UseAuthorization();
 
 // Map endpoints
 app.MapControllers();
 app.MapHealthChecks("/health");
-app.MapHub<SyncHub>("/hubs/sync");
+app.MapHub<SyncHub>("/hubs/sync").RequireCors("SignalR");
+
+// Register application lifetime events for graceful shutdown notifications
+var lifetime = app.Services.GetRequiredService<IHostApplicationLifetime>();
+var logger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("SqlSyncService.Startup");
+
+lifetime.ApplicationStopping.Register(() =>
+{
+    logger.LogInformation("Application shutdown initiated, notifying connected clients...");
+
+    try
+    {
+        var eventPublisher = app.Services.GetRequiredService<IRealtimeEventPublisher>();
+        var shutdownEvent = new ServiceShuttingDownEvent
+        {
+            Timestamp = DateTimeOffset.UtcNow,
+            Reason = "Application shutdown requested",
+            GracePeriodSeconds = 5
+        };
+
+        // Use synchronous wait since we're in a sync callback
+        eventPublisher.PublishToAllSubscriptionsAsync(
+            RealtimeEventNames.ServiceShuttingDown,
+            shutdownEvent,
+            CancellationToken.None).GetAwaiter().GetResult();
+
+        logger.LogInformation("ServiceShuttingDown event published to all connected clients");
+    }
+    catch (Exception ex)
+    {
+        logger.LogWarning(ex, "Failed to publish ServiceShuttingDown event");
+    }
+});
 
 app.Run();
 

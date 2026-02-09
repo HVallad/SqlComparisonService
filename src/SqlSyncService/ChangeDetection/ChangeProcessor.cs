@@ -1,8 +1,6 @@
-using Microsoft.AspNetCore.SignalR;
 using SqlSyncService.Domain.Changes;
 using SqlSyncService.Domain.Comparisons;
 using SqlSyncService.Persistence;
-using SqlSyncService.Realtime;
 using SqlSyncService.Services;
 
 namespace SqlSyncService.ChangeDetection;
@@ -16,20 +14,17 @@ public sealed class ChangeProcessor : IChangeProcessor
     private readonly ISubscriptionRepository _subscriptionRepository;
     private readonly IPendingChangeRepository _pendingChangeRepository;
     private readonly IComparisonOrchestrator _comparisonOrchestrator;
-    private readonly IHubContext<SyncHub> _hubContext;
     private readonly ILogger<ChangeProcessor> _logger;
 
     public ChangeProcessor(
         ISubscriptionRepository subscriptionRepository,
         IPendingChangeRepository pendingChangeRepository,
-        IComparisonOrchestrator comparisonOrchestrator,
-        IHubContext<SyncHub> hubContext,
-        ILogger<ChangeProcessor> logger)
+            IComparisonOrchestrator comparisonOrchestrator,
+            ILogger<ChangeProcessor> logger)
     {
         _subscriptionRepository = subscriptionRepository ?? throw new ArgumentNullException(nameof(subscriptionRepository));
         _pendingChangeRepository = pendingChangeRepository ?? throw new ArgumentNullException(nameof(pendingChangeRepository));
         _comparisonOrchestrator = comparisonOrchestrator ?? throw new ArgumentNullException(nameof(comparisonOrchestrator));
-        _hubContext = hubContext ?? throw new ArgumentNullException(nameof(hubContext));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -50,23 +45,7 @@ public sealed class ChangeProcessor : IChangeProcessor
             await _pendingChangeRepository.AddAsync(change, cancellationToken);
         }
 
-        // 2. Notify via SignalR that changes were detected
-        await _hubContext.Clients.All.SendAsync(
-            "ChangesDetected",
-            new
-            {
-                SubscriptionId = batch.SubscriptionId,
-                ChangeCount = batch.Changes.Count,
-                Changes = batch.Changes.Select(c => new
-                {
-                    c.ObjectIdentifier,
-                    Source = c.Source.ToString(),
-                    Type = c.Type.ToString()
-                })
-            },
-            cancellationToken);
-
-        // 3. Get subscription and check options
+        // 2. Get subscription and check options
         var subscription = await _subscriptionRepository.GetByIdAsync(batch.SubscriptionId, cancellationToken);
         if (subscription is null)
         {
@@ -142,6 +121,7 @@ public sealed class ChangeProcessor : IChangeProcessor
             await _comparisonOrchestrator.CompareObjectsAsync(
                 batch.SubscriptionId,
                 objectIdentifiers,
+                trigger: "database-change",
                 cancellationToken);
         }
 
@@ -149,6 +129,10 @@ public sealed class ChangeProcessor : IChangeProcessor
         if (otherChanges.Count > 0)
         {
             var hasDbChanges = otherChanges.Any(c => c.Source == ChangeSource.Database);
+            var hasFileChanges = otherChanges.Any(c => c.Source == ChangeSource.FileSystem);
+
+            // Determine trigger based on change sources
+            var trigger = hasDbChanges ? "database-change" : "file-change";
 
             _logger.LogInformation(
                 "Triggering {ComparisonType} comparison for subscription {SubscriptionId} due to {Count} change(s)",
@@ -159,6 +143,7 @@ public sealed class ChangeProcessor : IChangeProcessor
             await _comparisonOrchestrator.RunComparisonAsync(
                 batch.SubscriptionId,
                 fullComparison: hasDbChanges,
+                trigger: trigger,
                 cancellationToken);
         }
     }

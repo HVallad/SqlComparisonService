@@ -5,6 +5,8 @@ using SqlSyncService.Configuration;
 using SqlSyncService.Domain.Changes;
 using SqlSyncService.Domain.Subscriptions;
 using SqlSyncService.Persistence;
+using SqlSyncService.Realtime;
+using SqlSyncService.Realtime.Events;
 
 namespace SqlSyncService.Workers;
 
@@ -173,6 +175,9 @@ public sealed class FileWatchingWorker : BackgroundService
             _logger.LogDebug(
                 "File {ChangeType}: {Path} for subscription {SubscriptionId}",
                 changeType, e.FullPath, subscriptionId);
+
+            // Emit SignalR event (fire-and-forget since this is a sync event handler)
+            _ = EmitFileChangedEventAsync(subscriptionId, e.FullPath, changeType, oldFilePath: null);
         }
         catch (Exception ex)
         {
@@ -190,6 +195,9 @@ public sealed class FileWatchingWorker : BackgroundService
             _logger.LogDebug(
                 "File renamed: {OldPath} -> {NewPath} for subscription {SubscriptionId}",
                 e.OldFullPath, e.FullPath, subscriptionId);
+
+            // Emit SignalR event for rename (fire-and-forget since this is a sync event handler)
+            _ = EmitFileChangedEventAsync(subscriptionId, e.FullPath, ChangeType.Renamed, oldFilePath: e.OldFullPath);
         }
         catch (Exception ex)
         {
@@ -225,6 +233,44 @@ public sealed class FileWatchingWorker : BackgroundService
         foreach (var subscriptionId in _watchers.Keys.ToList())
         {
             RemoveWatcher(subscriptionId);
+        }
+    }
+
+    private async Task EmitFileChangedEventAsync(Guid subscriptionId, string filePath, ChangeType changeType, string? oldFilePath)
+    {
+        try
+        {
+            using var scope = _serviceProvider.CreateScope();
+            var eventPublisher = scope.ServiceProvider.GetRequiredService<IRealtimeEventPublisher>();
+
+            // Map ChangeType to spec-compliant string
+            var changeTypeString = changeType switch
+            {
+                ChangeType.Created => "created",
+                ChangeType.Modified => "modified",
+                ChangeType.Deleted => "deleted",
+                ChangeType.Renamed => "renamed",
+                _ => "modified"
+            };
+
+            await eventPublisher.PublishToSubscriptionAsync(
+                subscriptionId,
+                RealtimeEventNames.FileChanged,
+                new FileChangedEvent
+                {
+                    SubscriptionId = subscriptionId,
+                    Timestamp = DateTimeOffset.UtcNow,
+                    ChangeType = changeTypeString,
+                    FilePath = filePath,
+                    OldFilePath = oldFilePath,
+                    ObjectName = Path.GetFileNameWithoutExtension(filePath),
+                    ObjectType = null // Could be inferred from folder structure if needed
+                },
+                CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to emit FileChanged event for subscription {SubscriptionId}", subscriptionId);
         }
     }
 
